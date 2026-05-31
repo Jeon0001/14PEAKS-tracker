@@ -1,0 +1,1617 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>14PEAKS Route Builder</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #101112;
+      color: #f5f1e8;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(135deg, rgba(96, 165, 250, 0.08), transparent 34%),
+        linear-gradient(315deg, rgba(249, 115, 22, 0.12), transparent 38%),
+        #101112;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      background:
+        linear-gradient(115deg, transparent 0 42%, rgba(255,255,255,0.05) 42.2% 42.6%, transparent 42.8%),
+        linear-gradient(150deg, transparent 0 54%, rgba(255,255,255,0.045) 54.2% 54.6%, transparent 54.8%),
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.026) 0 1px, transparent 1px 82px),
+        repeating-linear-gradient(90deg, rgba(255,255,255,0.022) 0 1px, transparent 1px 82px);
+      opacity: 0.72;
+      animation: backgroundDrift 18s linear infinite;
+    }
+
+    @keyframes backgroundDrift {
+      from { transform: translate3d(0, 0, 0); }
+      to { transform: translate3d(-82px, -82px, 0); }
+    }
+
+    @keyframes orbitSweep {
+      from { transform: rotateX(62deg) rotateZ(0deg) scale(1.04); }
+      to { transform: rotateX(62deg) rotateZ(360deg) scale(1.04); }
+    }
+
+    @keyframes routePulse {
+      0%, 100% {
+        opacity: 0.2;
+        transform: translate3d(-3%, 2%, 0) scale(1);
+      }
+      50% {
+        opacity: 0.74;
+        transform: translate3d(3%, -2%, 0) scale(1.05);
+      }
+    }
+
+    @keyframes titleRise {
+      from {
+        opacity: 0;
+        transform: translateY(18px) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    main {
+      min-height: 100vh;
+      padding: 28px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 18px;
+      color: #c7c1b6;
+      line-height: 1.5;
+    }
+
+    label {
+      display: block;
+      margin: 16px 0 6px;
+      font-size: 13px;
+      color: #d8d2c8;
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid #3a3f42;
+      background: #101112;
+      color: #f5f1e8;
+      border-radius: 6px;
+      padding: 10px 11px;
+      font: inherit;
+    }
+
+    input[type="file"] {
+      padding: 9px;
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    .app-shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      transition: max-width 520ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .app-shell.crop-mode {
+      max-width: calc(100vw - 32px);
+    }
+
+    .wizard {
+      display: grid;
+      gap: 18px;
+    }
+
+    .wizard-header {
+      display: none;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #333739;
+    }
+
+    .steps {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .step-pill {
+      border: 1px solid #333739;
+      border-radius: 999px;
+      padding: 7px 11px;
+      color: #9fa5a8;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .step-pill.active {
+      border-color: #f97316;
+      color: #fff7ed;
+      background: rgba(249, 115, 22, 0.14);
+    }
+
+    .wizard-step {
+      position: relative;
+      display: none;
+      min-height: calc(100vh - 56px);
+      padding: 28px;
+      border: 1px solid #333739;
+      border-radius: 8px;
+      background: rgba(23, 25, 26, 0.92);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(10px);
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    .wizard-step.active {
+      display: grid;
+      align-content: start;
+      gap: 18px;
+    }
+
+    .wizard-step::before,
+    .wizard-step::after {
+      content: "";
+      position: absolute;
+      inset: -28%;
+      z-index: -1;
+      pointer-events: none;
+    }
+
+    .wizard-step::before {
+      background:
+        radial-gradient(circle at 50% 50%, transparent 0 21%, rgba(96, 165, 250, 0.34) 21.3% 21.6%, transparent 22% 34%, rgba(249, 115, 22, 0.25) 34.3% 34.6%, transparent 35%),
+        conic-gradient(from 20deg, transparent 0deg, rgba(96, 165, 250, 0.2) 36deg, transparent 70deg, rgba(249, 115, 22, 0.16) 118deg, transparent 160deg, rgba(34, 197, 94, 0.14) 218deg, transparent 292deg);
+      opacity: 0.32;
+      animation: orbitSweep 28s linear infinite;
+    }
+
+    .wizard-step::after {
+      inset: 0;
+      background:
+        linear-gradient(115deg, transparent 0 35%, rgba(249, 115, 22, 0.52) 35.2% 35.7%, transparent 36%),
+        linear-gradient(145deg, transparent 0 48%, rgba(96, 165, 250, 0.4) 48.2% 48.6%, transparent 49%),
+        linear-gradient(25deg, transparent 0 58%, rgba(34, 197, 94, 0.34) 58.2% 58.55%, transparent 59%),
+        radial-gradient(circle at 18% 26%, #60a5fa 0 2px, transparent 3px),
+        radial-gradient(circle at 74% 32%, #f97316 0 2px, transparent 3px),
+        radial-gradient(circle at 62% 72%, #22c55e 0 2px, transparent 3px),
+        radial-gradient(circle at 35% 68%, #fde68a 0 1.5px, transparent 2.5px);
+      opacity: 0.36;
+      animation: routePulse 7s ease-in-out infinite;
+    }
+
+    .intro-step::before {
+      opacity: 0.58;
+    }
+
+    .intro-step::after {
+      opacity: 0.68;
+    }
+
+    .intro-step.active {
+      align-content: center;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .intro-title {
+      max-width: 860px;
+      margin: 0 0 18px;
+      font-size: clamp(54px, 9vw, 122px);
+      line-height: 0.88;
+      letter-spacing: 0;
+      animation: titleRise 650ms ease both;
+    }
+
+    .intro-copy {
+      max-width: 620px;
+      font-size: 18px;
+      margin-left: auto;
+      margin-right: auto;
+      animation: titleRise 650ms ease 120ms both;
+    }
+
+    .intro-step .flow-kicker,
+    .intro-step .step-actions {
+      justify-content: center;
+      animation: titleRise 650ms ease 220ms both;
+    }
+
+    .intro-step .step-actions button {
+      min-width: 180px;
+    }
+
+    .flow-kicker {
+      margin: 0 0 8px;
+      color: #f97316;
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .step-content {
+      max-width: 520px;
+    }
+
+    .upload-step.active {
+      align-content: center;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .upload-step .step-content {
+      width: min(760px, 100%);
+      max-width: none;
+    }
+
+    .drop-zone {
+      display: grid;
+      place-items: center;
+      min-height: 300px;
+      margin-top: 18px;
+      border: 1px dashed rgba(249, 115, 22, 0.72);
+      border-radius: 8px;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(249, 115, 22, 0.18), transparent 44%),
+        rgba(16, 17, 18, 0.78);
+      cursor: pointer;
+      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+
+    .drop-zone.dragging,
+    .drop-zone:hover {
+      border-color: #f97316;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(249, 115, 22, 0.26), transparent 48%),
+        rgba(16, 17, 18, 0.9);
+      transform: translateY(-1px);
+    }
+
+    .drop-zone strong {
+      display: block;
+      margin-bottom: 8px;
+      color: #fff7ed;
+      font-size: clamp(22px, 4vw, 38px);
+      line-height: 1;
+    }
+
+    .drop-zone span {
+      color: #c7c1b6;
+    }
+
+    .drop-zone-file {
+      margin-top: 12px;
+      color: #f97316;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .config-step.active {
+      min-height: calc(100vh - 56px);
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      padding: 18px;
+      transition: border-color 320ms ease, box-shadow 520ms ease;
+      box-shadow:
+        0 24px 80px rgba(0, 0, 0, 0.34),
+        0 0 0 1px rgba(249, 115, 22, 0.2);
+    }
+
+    .config-step .step-content {
+      max-width: 840px;
+    }
+
+    .config-step .step-content h1 {
+      margin-bottom: 4px;
+    }
+
+    .config-step .step-content p {
+      margin-bottom: 8px;
+    }
+
+    .config-step .step-content label {
+      margin-top: 8px;
+    }
+
+    .step-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .step-actions button {
+      width: auto;
+      min-width: 140px;
+      margin-top: 0;
+      padding: 0 16px;
+    }
+
+    .secondary-button {
+      border: 1px solid #3a3f42;
+      background: #101112;
+      color: #f5f1e8;
+    }
+
+    .crop-picker {
+      display: grid;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .crop-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 220px;
+      gap: 14px;
+      align-items: start;
+      height: 100%;
+    }
+
+    .crop-stage {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid #333739;
+      border-radius: 6px;
+      background: #0d0f10;
+      aspect-ratio: 16 / 9;
+      cursor: crosshair;
+      user-select: none;
+      width: 100%;
+      max-width: min(100%, calc((100vh - 250px) * 16 / 9));
+      margin: 0 auto;
+    }
+
+    #crop-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #crop-box {
+      position: absolute;
+      display: none;
+      border: 2px solid #f97316;
+      background: rgba(249, 115, 22, 0.18);
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.42);
+      pointer-events: none;
+    }
+
+    .crop-meta {
+      min-height: 18px;
+      color: #9fa5a8;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .crop-example {
+      border: 1px solid #333739;
+      border-radius: 6px;
+      padding: 10px;
+      background: #111314;
+    }
+
+    .crop-example span {
+      display: block;
+      margin-bottom: 8px;
+      color: #d8d2c8;
+      font-size: 13px;
+    }
+
+    .crop-example-image {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid #2e3335;
+      border-radius: 4px;
+      background: #252729;
+    }
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      min-height: 42px;
+      border: 0;
+      border-radius: 6px;
+      margin-top: 18px;
+      background: #f97316;
+      color: #130b05;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.65;
+    }
+
+    .status {
+      min-height: 44px;
+      margin-top: 16px;
+      padding: 10px 0;
+      color: #c7c1b6;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .progress-panel {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .loading-screen {
+      display: none;
+      min-height: calc(100vh - 56px);
+      padding: 28px;
+      border: 1px solid #333739;
+      border-radius: 8px;
+      background: rgba(17, 19, 20, 0.94);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+      align-content: center;
+      gap: 18px;
+    }
+
+    .loading-screen.visible {
+      display: grid;
+    }
+
+    .loading-title {
+      margin: 0;
+      font-size: clamp(34px, 6vw, 72px);
+      line-height: 0.98;
+    }
+
+    .progress-row {
+      display: grid;
+      gap: 6px;
+    }
+
+    .progress-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: #d8d2c8;
+      font-size: 13px;
+    }
+
+    .progress-track {
+      height: 9px;
+      overflow: hidden;
+      border: 1px solid #333739;
+      border-radius: 999px;
+      background: #0d0f10;
+    }
+
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: #f97316;
+      transition: width 180ms ease;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .stat {
+      border: 1px solid #333739;
+      border-radius: 6px;
+      padding: 10px;
+      background: #111314;
+    }
+
+    .stat span {
+      display: block;
+      color: #9fa5a8;
+      font-size: 12px;
+    }
+
+    .stat strong {
+      display: block;
+      margin-top: 3px;
+      font-size: 18px;
+    }
+
+    #viewer {
+      position: relative;
+      min-height: 72vh;
+      overflow: hidden;
+      border: 1px solid #333739;
+      border-radius: 8px;
+      background: #0e0f10;
+    }
+
+    .route-output {
+      display: none;
+      min-height: calc(100vh - 56px);
+      padding: 18px;
+      border: 1px solid #333739;
+      border-radius: 8px;
+      background: rgba(17, 19, 20, 0.94);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+    }
+
+    .route-output.visible {
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 14px;
+    }
+
+    .output-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .output-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .output-actions button {
+      width: auto;
+      min-width: 132px;
+      margin-top: 0;
+      padding: 0 16px;
+    }
+
+    #empty {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #8f9699;
+      text-align: center;
+      padding: 24px;
+    }
+
+    #tooltip {
+      position: absolute;
+      display: none;
+      z-index: 10;
+      pointer-events: none;
+      color: #fff7ed;
+      background: rgba(12, 13, 14, 0.9);
+      border: 1px solid #f97316;
+      border-radius: 6px;
+      padding: 7px 9px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      place-items: center;
+      padding: 24px;
+      background: rgba(0, 0, 0, 0.64);
+    }
+
+    .modal-backdrop.visible {
+      display: grid;
+    }
+
+    .error-modal {
+      width: min(460px, 100%);
+      border: 1px solid #f97316;
+      border-radius: 8px;
+      padding: 20px;
+      background: #17191a;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.46);
+    }
+
+    .error-modal h2 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    .error-modal p {
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 840px) {
+      main {
+        padding: 16px;
+      }
+
+      .wizard-header {
+        display: grid;
+      }
+
+      .steps {
+        justify-content: flex-start;
+      }
+
+      .wizard-step {
+        min-height: auto;
+        padding: 16px;
+      }
+
+      .app-shell.crop-mode {
+        max-width: calc(100vw - 16px);
+      }
+
+      .crop-stage {
+        max-width: 100%;
+      }
+
+      .crop-layout {
+        grid-template-columns: 1fr;
+      }
+
+      #viewer {
+        min-height: 62vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="app-shell">
+      <form id="upload-form" class="wizard">
+        <div class="wizard-header">
+          <div>
+            <h1>14PEAKS Route Visualizer</h1>
+            <p>Upload a 1080p ({{ expected_width }}x{{ expected_height }}) video and generate an interactive 3D route from the HUD coordinates.</p>
+          </div>
+          <div class="steps" aria-label="Route generation steps">
+            <span class="step-pill active" data-step-pill="0">Intro</span>
+            <span class="step-pill" data-step-pill="1">Upload</span>
+            <span class="step-pill" data-step-pill="2">Setup</span>
+          </div>
+        </div>
+
+        <section class="wizard-step intro-step active" data-step="0">
+          <div>
+            <div class="flow-kicker">14PEAKS route analysis</div>
+            <h1 class="intro-title">14Peaks Route Visualizer</h1>
+            <p class="intro-copy">Turn a 1080p route video into an interactive 3D path using the altitude and coordinate HUD.</p>
+          </div>
+          <div class="step-actions">
+            <button id="start-flow" type="button">Next</button>
+          </div>
+        </section>
+
+        <section class="wizard-step upload-step" data-step="1">
+          <div class="step-content">
+            <div class="flow-kicker">Step 1</div>
+            <h1>Upload Video</h1>
+            <p>Choose a 1080p ({{ expected_width }}x{{ expected_height }}) route video.</p>
+            <label id="drop-zone" class="drop-zone" for="video">
+              <span>
+                <strong>Drop Your Route Video Here</strong>
+                <span>or click to choose a 1080p video file</span>
+                <span id="drop-zone-file" class="drop-zone-file">No file selected</span>
+              </span>
+            </label>
+            <input id="video" class="visually-hidden" name="video" type="file" accept="video/*" required>
+          </div>
+          <div class="step-actions">
+            <button class="secondary-button" type="button" data-back>Back</button>
+            <button id="next-upload" type="button">Next</button>
+          </div>
+        </section>
+
+        <section class="wizard-step config-step" data-step="2">
+          <div class="step-content">
+            <div class="flow-kicker">Step 2</div>
+            <h1>Interval And Crop</h1>
+            <p>Select how often to sample the video, then drag around the altitude and X/Z coordinate text. Recommended: 1.5 seconds.</p>
+            <label for="sample_interval">Sample interval, seconds</label>
+            <input id="sample_interval" name="sample_interval" type="number" min="0.1" max="5" step="0.1" value="1.5">
+          </div>
+
+          <div>
+            <label>HUD crop</label>
+            <div class="crop-layout">
+              <div class="crop-picker">
+                <div id="crop-stage" class="crop-stage">
+                  <canvas id="crop-canvas"></canvas>
+                  <div id="crop-box"></div>
+                </div>
+                <div id="crop-meta" class="crop-meta">Choose a video, then drag over the altitude and X/Z coordinate text.</div>
+              </div>
+              <div class="crop-example" aria-label="Ideal crop example">
+                <span>Ideal crop example</span>
+                <img class="crop-example-image" src="/images/ideal_crop.png" alt="Ideal crop showing altitude and X/Z coordinates">
+              </div>
+            </div>
+          </div>
+          <input id="crop_left" name="crop_left" type="hidden" value="{{ default_crop.left }}">
+          <input id="crop_top" name="crop_top" type="hidden" value="{{ default_crop.top }}">
+          <input id="crop_width" name="crop_width" type="hidden" value="{{ default_crop.width }}">
+          <input id="crop_height" name="crop_height" type="hidden" value="{{ default_crop.height }}">
+
+          <div class="step-actions">
+            <button class="secondary-button" type="button" data-back>Back</button>
+            <button id="submit" type="submit">Generate 3D Route</button>
+          </div>
+        </section>
+      </form>
+
+      <section id="loading-screen" class="loading-screen">
+        <div>
+          <div class="flow-kicker">Generating route</div>
+          <h1 class="loading-title">Building The 3D Path</h1>
+          <p id="status" class="status">Uploading video...</p>
+        </div>
+
+        <div id="progress" class="progress-panel">
+          <div class="progress-row">
+            <div class="progress-label">
+              <span>Upload</span>
+              <span id="upload-text">0%</span>
+            </div>
+            <div class="progress-track">
+              <div id="upload-fill" class="progress-fill"></div>
+            </div>
+          </div>
+
+          <div class="progress-row">
+            <div class="progress-label">
+              <span>3D route path</span>
+              <span id="process-text">0%</span>
+            </div>
+            <div class="progress-track">
+              <div id="process-fill" class="progress-fill"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="route-output" class="route-output">
+        <div class="output-header">
+          <div>
+            <div class="flow-kicker">Route output</div>
+            <h1>3D Route</h1>
+          </div>
+          <div class="output-actions">
+            <button id="download-route" type="button">Download Route Image</button>
+            <button id="restart-flow" class="secondary-button" type="button">Start Over</button>
+          </div>
+        </div>
+        <div id="stats" class="stats" hidden></div>
+        <div id="viewer">
+          <div id="empty">Generated routes appear here.</div>
+          <div id="tooltip"></div>
+        </div>
+      </section>
+    </div>
+
+    <div id="error-backdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="error-title">
+      <div class="error-modal">
+        <h2 id="error-title">Something Went Wrong</h2>
+        <p id="error-message"></p>
+        <button id="close-error" type="button">Close</button>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import * as THREE from "https://esm.sh/three@0.159.0";
+    import { OrbitControls } from "https://esm.sh/three@0.159.0/examples/jsm/controls/OrbitControls.js";
+
+    const appShell = document.querySelector(".app-shell");
+    const form = document.getElementById("upload-form");
+    const videoInput = document.getElementById("video");
+    const dropZone = document.getElementById("drop-zone");
+    const dropZoneFile = document.getElementById("drop-zone-file");
+    const submit = document.getElementById("submit");
+    const cropStage = document.getElementById("crop-stage");
+    const cropCanvas = document.getElementById("crop-canvas");
+    const cropBox = document.getElementById("crop-box");
+    const cropMeta = document.getElementById("crop-meta");
+    const cropInputs = {
+      left: document.getElementById("crop_left"),
+      top: document.getElementById("crop_top"),
+      width: document.getElementById("crop_width"),
+      height: document.getElementById("crop_height"),
+    };
+    const wizardSteps = [...document.querySelectorAll("[data-step]")];
+    const stepPills = [...document.querySelectorAll("[data-step-pill]")];
+    const startFlow = document.getElementById("start-flow");
+    const nextUpload = document.getElementById("next-upload");
+    const loadingScreen = document.getElementById("loading-screen");
+    const downloadRoute = document.getElementById("download-route");
+    const restartFlow = document.getElementById("restart-flow");
+    const errorBackdrop = document.getElementById("error-backdrop");
+    const errorMessage = document.getElementById("error-message");
+    const closeError = document.getElementById("close-error");
+    const progress = document.getElementById("progress");
+    const uploadFill = document.getElementById("upload-fill");
+    const uploadText = document.getElementById("upload-text");
+    const processFill = document.getElementById("process-fill");
+    const processText = document.getElementById("process-text");
+    const status = document.getElementById("status");
+    const stats = document.getElementById("stats");
+    const routeOutput = document.getElementById("route-output");
+    const viewer = document.getElementById("viewer");
+    const empty = document.getElementById("empty");
+    const tooltip = document.getElementById("tooltip");
+
+    let renderer;
+    let camera;
+    let controls;
+    let scene;
+    let animationId;
+    let pointMeshes = [];
+    let progressTimer;
+    let cropVideo;
+    let cropVideoUrl;
+    let cropFrameReady = false;
+    let cropDragStart = null;
+    let currentStep = 0;
+    let selectedCrop = null;
+    let latestRoute = [];
+    let latestStats = null;
+
+    videoInput.addEventListener("change", () => {
+      updateSelectedFileLabel();
+      loadCropFrame();
+    });
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropZone.classList.add("dragging");
+      });
+    });
+    ["dragleave", "drop"].forEach((eventName) => {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropZone.classList.remove("dragging");
+      });
+    });
+    dropZone.addEventListener("drop", (event) => {
+      const file = [...event.dataTransfer.files].find((item) => item.type.startsWith("video/"));
+
+      if (!file) {
+        showError("Drop a video file to continue.");
+        return;
+      }
+
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      videoInput.files = transfer.files;
+      updateSelectedFileLabel();
+      loadCropFrame();
+    });
+    startFlow.addEventListener("click", () => showStep(1));
+    nextUpload.addEventListener("click", () => {
+      if (!videoInput.files.length) {
+        showError("Choose a video file first.");
+        return;
+      }
+
+      showStep(2);
+    });
+    document.querySelectorAll("[data-back]").forEach((button) => {
+      button.addEventListener("click", () => showStep(Math.max(0, currentStep - 1)));
+    });
+    restartFlow.addEventListener("click", () => {
+      routeOutput.classList.remove("visible");
+      stats.hidden = true;
+      empty.style.display = "grid";
+      latestRoute = [];
+      latestStats = null;
+      showStep(0);
+    });
+    downloadRoute.addEventListener("click", () => {
+      if (!latestRoute.length || !latestStats) {
+        showError("Generate a route before downloading an image.");
+        return;
+      }
+
+      downloadRouteImage(latestRoute, latestStats);
+    });
+    closeError.addEventListener("click", hideError);
+    errorBackdrop.addEventListener("click", (event) => {
+      if (event.target === errorBackdrop) {
+        hideError();
+      }
+    });
+
+    cropStage.addEventListener("pointerdown", (event) => {
+      if (!cropFrameReady) {
+        return;
+      }
+
+      cropStage.setPointerCapture(event.pointerId);
+      cropDragStart = pointerToStage(event);
+      setCropBox(cropDragStart.x, cropDragStart.y, 0, 0);
+    });
+
+    cropStage.addEventListener("pointermove", (event) => {
+      if (!cropDragStart) {
+        return;
+      }
+
+      const current = pointerToStage(event);
+      const left = Math.min(cropDragStart.x, current.x);
+      const top = Math.min(cropDragStart.y, current.y);
+      const width = Math.abs(current.x - cropDragStart.x);
+      const height = Math.abs(current.y - cropDragStart.y);
+      setCropBox(left, top, width, height);
+      updateCropInputsFromStage(left, top, width, height);
+    });
+
+    cropStage.addEventListener("pointerup", finishCropDrag);
+    cropStage.addEventListener("pointercancel", finishCropDrag);
+
+    function showStep(step) {
+      currentStep = step;
+      form.hidden = false;
+      appShell.classList.toggle("crop-mode", step === 2);
+      loadingScreen.classList.remove("visible");
+      routeOutput.classList.remove("visible");
+
+      wizardSteps.forEach((section) => {
+        section.classList.toggle("active", Number(section.dataset.step) === step);
+      });
+
+      stepPills.forEach((pill) => {
+        pill.classList.toggle("active", Number(pill.dataset.stepPill) === step);
+      });
+
+      if (step === 2 && cropFrameReady) {
+        requestAnimationFrame(() => {
+          drawCropFrame();
+          redrawSelectedCrop();
+        });
+        setTimeout(() => {
+          drawCropFrame();
+          redrawSelectedCrop();
+        }, 560);
+      }
+    }
+
+    function updateSelectedFileLabel() {
+      const file = videoInput.files[0];
+      dropZoneFile.textContent = file ? file.name : "No file selected";
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      if (!selectedCrop) {
+        showStep(2);
+        showError("Drag a box around the altitude and X/Z coordinate text before generating.");
+        return;
+      }
+
+      submit.disabled = true;
+      const jobId = createJobId();
+      const formData = new FormData(form);
+      formData.append("job_id", jobId);
+
+      resetProgress();
+      startProgressPolling(jobId);
+      status.textContent = "Uploading video...";
+      stats.hidden = true;
+
+      try {
+        const payload = await uploadAndProcess(formData);
+
+        if (!payload.route.length) {
+          throw new Error("No readable route points were found. Adjust the HUD crop and try again.");
+        }
+
+        loadingScreen.classList.remove("visible");
+        routeOutput.classList.add("visible");
+        await nextFrame();
+        latestRoute = payload.route;
+        latestStats = payload.stats;
+        renderRoute(payload.route);
+        renderStats(payload.stats);
+      } catch (error) {
+        loadingScreen.classList.remove("visible");
+        form.hidden = false;
+        showStep(2);
+        showError(error.message);
+      } finally {
+        stopProgressPolling();
+        submit.disabled = false;
+      }
+    });
+
+    async function loadCropFrame() {
+      const file = videoInput.files[0];
+      cropFrameReady = false;
+      cropDragStart = null;
+      selectedCrop = null;
+      cropBox.style.display = "none";
+      cropMeta.textContent = "Loading preview frame...";
+
+      if (cropVideoUrl) {
+        URL.revokeObjectURL(cropVideoUrl);
+      }
+
+      if (!file) {
+        cropMeta.textContent = "Choose a video, then drag over the altitude and X/Z coordinate text.";
+        return;
+      }
+
+      cropVideoUrl = URL.createObjectURL(file);
+      cropVideo = document.createElement("video");
+      cropVideo.preload = "metadata";
+      cropVideo.muted = true;
+      cropVideo.playsInline = true;
+      cropVideo.src = cropVideoUrl;
+
+      try {
+        await waitForEvent(cropVideo, "loadedmetadata");
+        const targetTime = Math.min(30, Math.max(0, cropVideo.duration - 0.1));
+        cropVideo.currentTime = Number.isFinite(targetTime) ? targetTime : 0;
+        await waitForEvent(cropVideo, "seeked");
+        drawCropFrame();
+        cropFrameReady = true;
+        cropMeta.textContent = "Drag a box around the altitude and X/Z coordinate text.";
+      } catch (_error) {
+        cropMeta.textContent = "Could not load a preview frame.";
+        showError("Could not load a preview frame from this video.");
+      }
+    }
+
+    function waitForEvent(target, eventName) {
+      return new Promise((resolve, reject) => {
+        const handleEvent = () => {
+          cleanup();
+          resolve();
+        };
+        const handleError = () => {
+          cleanup();
+          reject(new Error("Video preview failed."));
+        };
+        const cleanup = () => {
+          target.removeEventListener(eventName, handleEvent);
+          target.removeEventListener("error", handleError);
+        };
+
+        target.addEventListener(eventName, handleEvent, { once: true });
+        target.addEventListener("error", handleError, { once: true });
+      });
+    }
+
+    function nextFrame() {
+      return new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+
+    function drawCropFrame() {
+      const width = cropVideo.videoWidth;
+      const height = cropVideo.videoHeight;
+      const context = cropCanvas.getContext("2d");
+
+      cropCanvas.width = width;
+      cropCanvas.height = height;
+      context.drawImage(cropVideo, 0, 0, width, height);
+    }
+
+    function pointerToStage(event) {
+      const bounds = cropStage.getBoundingClientRect();
+      return {
+        x: Math.max(0, Math.min(bounds.width, event.clientX - bounds.left)),
+        y: Math.max(0, Math.min(bounds.height, event.clientY - bounds.top)),
+      };
+    }
+
+    function setCropBox(left, top, width, height) {
+      cropBox.style.display = "block";
+      cropBox.style.left = `${left}px`;
+      cropBox.style.top = `${top}px`;
+      cropBox.style.width = `${width}px`;
+      cropBox.style.height = `${height}px`;
+    }
+
+    function updateCropInputsFromStage(left, top, width, height) {
+      const bounds = cropStage.getBoundingClientRect();
+      const scaleX = cropCanvas.width / bounds.width;
+      const scaleY = cropCanvas.height / bounds.height;
+      selectedCrop = {
+        left: Math.round(left * scaleX),
+        top: Math.round(top * scaleY),
+        width: Math.max(1, Math.round(width * scaleX)),
+        height: Math.max(1, Math.round(height * scaleY)),
+      };
+
+      updateCropInputs(selectedCrop);
+    }
+
+    function updateCropInputs(crop) {
+      cropInputs.left.value = crop.left;
+      cropInputs.top.value = crop.top;
+      cropInputs.width.value = crop.width;
+      cropInputs.height.value = crop.height;
+      cropMeta.textContent = `OCR crop: ${cropInputs.left.value}, ${cropInputs.top.value}, ${cropInputs.width.value} x ${cropInputs.height.value}`;
+    }
+
+    function redrawSelectedCrop() {
+      if (!selectedCrop || !cropCanvas.width || !cropCanvas.height) {
+        return;
+      }
+
+      const bounds = cropStage.getBoundingClientRect();
+      const scaleX = bounds.width / cropCanvas.width;
+      const scaleY = bounds.height / cropCanvas.height;
+      setCropBox(
+        selectedCrop.left * scaleX,
+        selectedCrop.top * scaleY,
+        selectedCrop.width * scaleX,
+        selectedCrop.height * scaleY
+      );
+    }
+
+    function finishCropDrag(event) {
+      if (!cropDragStart) {
+        return;
+      }
+
+      const current = pointerToStage(event);
+      const left = Math.min(cropDragStart.x, current.x);
+      const top = Math.min(cropDragStart.y, current.y);
+      const width = Math.abs(current.x - cropDragStart.x);
+      const height = Math.abs(current.y - cropDragStart.y);
+
+      if (width < 8 || height < 8) {
+        cropBox.style.display = "none";
+        cropMeta.textContent = "Drag a larger box around the altitude and X/Z coordinate text.";
+      } else {
+        updateCropInputsFromStage(left, top, width, height);
+      }
+
+      cropDragStart = null;
+    }
+
+    function createJobId() {
+      if (crypto.randomUUID) {
+        return crypto.randomUUID();
+      }
+
+      return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function resetProgress() {
+      routeOutput.classList.remove("visible");
+      form.hidden = true;
+      appShell.classList.remove("crop-mode");
+      loadingScreen.classList.add("visible");
+      setProgress(uploadFill, uploadText, 0);
+      setProgress(processFill, processText, 0);
+    }
+
+    function showError(message) {
+      errorMessage.textContent = message || "An unexpected error occurred.";
+      errorBackdrop.classList.add("visible");
+    }
+
+    function hideError() {
+      errorBackdrop.classList.remove("visible");
+    }
+
+    function setProgress(fill, text, percent) {
+      const safePercent = Math.max(0, Math.min(100, Math.round(percent || 0)));
+      fill.style.width = `${safePercent}%`;
+      text.textContent = `${safePercent}%`;
+    }
+
+    function uploadAndProcess(formData) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/process");
+        xhr.responseType = "json";
+
+        xhr.upload.addEventListener("progress", (event) => {
+          if (!event.lengthComputable) {
+            return;
+          }
+
+          const percent = event.loaded * 100 / event.total;
+          setProgress(uploadFill, uploadText, percent);
+
+          if (percent >= 100) {
+            status.textContent = "Upload complete. Calculating route path...";
+          }
+        });
+
+        xhr.addEventListener("load", () => {
+          const payload = xhr.response || {};
+
+          if (xhr.status < 200 || xhr.status >= 300) {
+            reject(new Error(payload.error || "Route generation failed."));
+            return;
+          }
+
+          setProgress(uploadFill, uploadText, 100);
+          setProgress(processFill, processText, 100);
+          resolve(payload);
+        });
+
+        xhr.addEventListener("error", () => {
+          reject(new Error("Upload failed. Check the server and try again."));
+        });
+
+        xhr.send(formData);
+      });
+    }
+
+    function startProgressPolling(jobId) {
+      stopProgressPolling();
+
+      const poll = async () => {
+        try {
+          const response = await fetch(`/api/progress/${encodeURIComponent(jobId)}`);
+          const data = await response.json();
+
+          if (data.stage === "processing" || data.stage === "done") {
+            setProgress(processFill, processText, data.percent);
+          }
+
+          if (data.message && data.stage !== "waiting" && data.stage !== "done") {
+            status.textContent = data.message;
+          }
+        } catch (_error) {
+          // The upload request is still the source of truth for final success/failure.
+        }
+      };
+
+      poll();
+      progressTimer = setInterval(poll, 500);
+    }
+
+    function stopProgressPolling() {
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+    }
+
+    function renderStats(data) {
+      const items = [
+        ["Clean points", data.cleanPoints],
+        ["Raw points", data.rawPoints],
+        ["Readable frames", data.readableFrames],
+        ["Sampled frames", data.sampledFrames],
+        ["FPS", data.fps],
+        ["Duration", data.durationSeconds ? `${data.durationSeconds}s` : "Unknown"],
+      ];
+
+      stats.innerHTML = items.map(([label, value]) => `
+        <div class="stat">
+          <span>${label}</span>
+          <strong>${value}</strong>
+        </div>
+      `).join("");
+      stats.hidden = false;
+    }
+
+    function resetViewer() {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+
+      if (renderer) {
+        renderer.dispose();
+        renderer.domElement.remove();
+      }
+
+      tooltip.style.display = "none";
+      pointMeshes = [];
+    }
+
+    function renderRoute(route) {
+      resetViewer();
+      empty.style.display = "none";
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0e0f10);
+
+      const viewerWidth = Math.max(1, viewer.clientWidth);
+      const viewerHeight = Math.max(1, viewer.clientHeight);
+
+      camera = new THREE.PerspectiveCamera(70, viewerWidth / viewerHeight, 0.1, 100000);
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.setSize(viewerWidth, viewerHeight);
+      viewer.appendChild(renderer.domElement);
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      scene.add(new THREE.AmbientLight(0xffffff, 2));
+
+      const minX = Math.min(...route.map((p) => p.x));
+      const minY = Math.min(...route.map((p) => p.y));
+      const minZ = Math.min(...route.map((p) => p.z));
+      const maxX = Math.max(...route.map((p) => p.x));
+      const maxY = Math.max(...route.map((p) => p.y));
+      const maxZ = Math.max(...route.map((p) => p.z));
+
+      const points = route.map((p) => new THREE.Vector3(
+        p.x - minX,
+        p.y - minY,
+        p.z - minZ
+      ));
+
+      addRouteAxes({
+        minX,
+        maxX,
+        minY,
+        maxY,
+        minZ,
+        maxZ,
+        altitudeScale: 1,
+      });
+
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(points),
+        new THREE.LineBasicMaterial({ color: 0xf97316 })
+      );
+      scene.add(line);
+
+      const pointGeo = new THREE.SphereGeometry(3, 10, 10);
+      const pointMat = new THREE.MeshBasicMaterial({ color: 0xf97316 });
+
+      route.forEach((point, index) => {
+        const dot = new THREE.Mesh(pointGeo, pointMat);
+        dot.position.copy(points[index]);
+        dot.userData.coords = point;
+        dot.userData.index = index + 1;
+        scene.add(dot);
+        pointMeshes.push(dot);
+      });
+
+      const box = new THREE.Box3().setFromObject(line);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const distance = Math.max(size.x, size.y, size.z, 300);
+
+      camera.position.set(center.x + distance * 0.75, center.y + distance * 0.5, center.z + distance * 0.75);
+      controls.target.copy(center);
+      controls.update();
+
+      animate();
+    }
+
+    function addRouteAxes(bounds) {
+      const xSpan = Math.max(1, bounds.maxX - bounds.minX);
+      const ySpan = Math.max(1, (bounds.maxY - bounds.minY) * bounds.altitudeScale);
+      const zSpan = Math.max(1, bounds.maxZ - bounds.minZ);
+      const maxSpan = Math.max(xSpan, ySpan, zSpan);
+      const padding = Math.max(maxSpan * 0.08, 30);
+      const tickSize = Math.max(maxSpan * 0.018, 8);
+      const axisGroup = new THREE.Group();
+
+      const xEnd = xSpan + padding;
+      const yEnd = ySpan + padding;
+      const zEnd = zSpan + padding;
+
+      addAxisLine(axisGroup, [-padding, 0, -padding], [xEnd, 0, -padding], 0x60a5fa);
+      addAxisLine(axisGroup, [-padding, 0, -padding], [-padding, yEnd, -padding], 0x22c55e);
+      addAxisLine(axisGroup, [-padding, 0, -padding], [-padding, 0, zEnd], 0xfacc15);
+
+      axisGroup.add(makeLabel("X coordinate", new THREE.Vector3(xEnd + tickSize, 0, -padding), "#93c5fd"));
+      axisGroup.add(makeLabel("Altitude", new THREE.Vector3(-padding, yEnd + tickSize, -padding), "#86efac"));
+      axisGroup.add(makeLabel("Z coordinate", new THREE.Vector3(-padding, 0, zEnd + tickSize), "#fde68a"));
+
+      addTicks(axisGroup, {
+        axis: "x",
+        minValue: bounds.minX,
+        maxValue: bounds.maxX,
+        base: new THREE.Vector3(0, 0, -padding),
+        length: xSpan,
+        tickSize,
+        color: 0x60a5fa,
+        labelColor: "#bfdbfe",
+      });
+
+      addTicks(axisGroup, {
+        axis: "y",
+        minValue: bounds.minY,
+        maxValue: bounds.maxY,
+        base: new THREE.Vector3(-padding, 0, -padding),
+        length: ySpan,
+        tickSize,
+        color: 0x22c55e,
+        labelColor: "#bbf7d0",
+      });
+
+      addTicks(axisGroup, {
+        axis: "z",
+        minValue: bounds.minZ,
+        maxValue: bounds.maxZ,
+        base: new THREE.Vector3(-padding, 0, 0),
+        length: zSpan,
+        tickSize,
+        color: 0xfacc15,
+        labelColor: "#fef3c7",
+      });
+
+      scene.add(axisGroup);
+    }
+
+    function addAxisLine(group, start, end, color) {
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(...start),
+        new THREE.Vector3(...end),
+      ]);
+      group.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({ color })));
+    }
+
+    function addTicks(group, options) {
+      const ticks = makeTicks(options.minValue, options.maxValue, 4);
+
+      ticks.forEach((value) => {
+        const ratio = options.maxValue === options.minValue
+          ? 0
+          : (value - options.minValue) / (options.maxValue - options.minValue);
+        const position = options.base.clone();
+
+        if (options.axis === "x") {
+          position.x += ratio * options.length;
+          addAxisLine(
+            group,
+            [position.x, position.y, position.z - options.tickSize * 0.35],
+            [position.x, position.y, position.z + options.tickSize * 0.35],
+            options.color
+          );
+          group.add(makeLabel(String(Math.round(value)), new THREE.Vector3(position.x, position.y - options.tickSize, position.z - options.tickSize), options.labelColor));
+        }
+
+        if (options.axis === "y") {
+          position.y += ratio * options.length;
+          addAxisLine(
+            group,
+            [position.x - options.tickSize * 0.35, position.y, position.z],
+            [position.x + options.tickSize * 0.35, position.y, position.z],
+            options.color
+          );
+          group.add(makeLabel(String(Math.round(value)), new THREE.Vector3(position.x - options.tickSize * 1.6, position.y, position.z), options.labelColor));
+        }
+
+        if (options.axis === "z") {
+          position.z += ratio * options.length;
+          addAxisLine(
+            group,
+            [position.x - options.tickSize * 0.35, position.y, position.z],
+            [position.x + options.tickSize * 0.35, position.y, position.z],
+            options.color
+          );
+          group.add(makeLabel(String(Math.round(value)), new THREE.Vector3(position.x - options.tickSize, position.y - options.tickSize, position.z), options.labelColor));
+        }
+      });
+    }
+
+    function makeTicks(min, max, count) {
+      if (min === max) {
+        return [min];
+      }
+
+      const step = (max - min) / count;
+      return Array.from({ length: count + 1 }, (_, index) => min + step * index);
+    }
+
+    function makeLabel(text, position, color) {
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      const fontSize = 34;
+      const padding = 16;
+      context.font = `700 ${fontSize}px Inter, Arial, sans-serif`;
+      const width = Math.ceil(context.measureText(text).width + padding * 2);
+      const height = fontSize + padding * 2;
+
+      canvas.width = width;
+      canvas.height = height;
+      context.font = `700 ${fontSize}px Inter, Arial, sans-serif`;
+      context.fillStyle = "rgba(14, 15, 16, 0.72)";
+      context.fillRect(0, 0, width, height);
+      context.fillStyle = color;
+      context.textBaseline = "middle";
+      context.fillText(text, padding, height / 2);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+      const sprite = new THREE.Sprite(material);
+      const labelScale = Math.max(28, Math.min(90, Math.max(canvas.width, canvas.height) * 0.16));
+      sprite.scale.set((canvas.width / canvas.height) * labelScale, labelScale, 1);
+      sprite.position.copy(position);
+      return sprite;
+    }
+
+    function animate() {
+      animationId = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    viewer.addEventListener("mousemove", (event) => {
+      if (!camera || !pointMeshes.length) {
+        return;
+      }
+
+      const bounds = viewer.getBoundingClientRect();
+      const mouse = new THREE.Vector2(
+        ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+        -((event.clientY - bounds.top) / bounds.height) * 2 + 1
+      );
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(mouse, camera);
+      const hits = raycaster.intersectObjects(pointMeshes);
+
+      if (hits.length) {
+        const data = hits[0].object.userData;
+        const point = data.coords;
+        tooltip.style.display = "block";
+        tooltip.style.left = `${event.clientX - bounds.left + 14}px`;
+        tooltip.style.top = `${event.clientY - bounds.top + 14}px`;
+        tooltip.innerHTML = `Point: ${data.index}<br>X: ${point.x}<br>Y: ${point.y}<br>Z: ${point.z}`;
+      } else {
+        tooltip.style.display = "none";
+      }
+    });
+
+    addEventListener("resize", () => {
+      redrawSelectedCrop();
+
+      if (!renderer || !camera) {
+        return;
+      }
+
+      const viewerWidth = Math.max(1, viewer.clientWidth);
+      const viewerHeight = Math.max(1, viewer.clientHeight);
+
+      camera.aspect = viewerWidth / viewerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(viewerWidth, viewerHeight);
+    });
+  </script>
+</body>
+</html>
