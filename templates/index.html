@@ -1271,6 +1271,7 @@
         const xhr = new XMLHttpRequest();
         xhr.open("POST", "/api/process");
         xhr.responseType = "json";
+        xhr.timeout = 600000; // 10 minutes — allow large video files to upload
         startUploadFallbackProgress();
 
         xhr.upload.addEventListener("progress", (event) => {
@@ -1301,9 +1302,14 @@
           resolve(payload);
         });
 
+        xhr.addEventListener("timeout", () => {
+          stopUploadFallbackProgress();
+          reject(new Error("Upload timed out. The file may be too large or your connection too slow. Please try again."));
+        });
+
         xhr.addEventListener("error", () => {
           stopUploadFallbackProgress();
-          reject(new Error("Upload failed. Check the server and try again."));
+          reject(new Error("Upload failed due to a network error. Check your connection and try again."));
         });
 
         xhr.send(formData);
