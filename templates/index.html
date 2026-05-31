@@ -900,6 +900,7 @@
     let animationId;
     let pointMeshes = [];
     let progressTimer;
+    let uploadFallbackTimer;
     let cropVideo;
     let cropVideoUrl;
     let cropFrameReady = false;
@@ -908,6 +909,8 @@
     let selectedCrop = null;
     let latestRoute = [];
     let latestStats = null;
+    let activeJobId = null;
+    let jobFinished = true;
 
     videoInput.addEventListener("change", () => {
       updateSelectedFileLabel();
@@ -1044,6 +1047,8 @@
 
       submit.disabled = true;
       const jobId = createJobId();
+      activeJobId = jobId;
+      jobFinished = false;
       const formData = new FormData(form);
       formData.append("job_id", jobId);
 
@@ -1066,12 +1071,17 @@
         latestStats = payload.stats;
         renderRoute(payload.route);
         renderStats(payload.stats);
+        jobFinished = true;
       } catch (error) {
         loadingScreen.classList.remove("visible");
         form.hidden = false;
         showStep(2);
-        showError(error.message);
+        if (error.message !== "Route generation was cancelled.") {
+          showError(error.message);
+        }
       } finally {
+        jobFinished = true;
+        activeJobId = null;
         stopProgressPolling();
         submit.disabled = false;
       }
@@ -1261,12 +1271,14 @@
         const xhr = new XMLHttpRequest();
         xhr.open("POST", "/api/process");
         xhr.responseType = "json";
+        startUploadFallbackProgress();
 
         xhr.upload.addEventListener("progress", (event) => {
           if (!event.lengthComputable) {
             return;
           }
 
+          stopUploadFallbackProgress();
           const percent = event.loaded * 100 / event.total;
           setProgress(uploadFill, uploadText, percent);
 
@@ -1276,6 +1288,7 @@
         });
 
         xhr.addEventListener("load", () => {
+          stopUploadFallbackProgress();
           const payload = xhr.response || {};
 
           if (xhr.status < 200 || xhr.status >= 300) {
@@ -1289,11 +1302,34 @@
         });
 
         xhr.addEventListener("error", () => {
+          stopUploadFallbackProgress();
           reject(new Error("Upload failed. Check the server and try again."));
         });
 
         xhr.send(formData);
       });
+    }
+
+    function startUploadFallbackProgress() {
+      stopUploadFallbackProgress();
+      let percent = 1;
+      setProgress(uploadFill, uploadText, percent);
+
+      uploadFallbackTimer = setInterval(() => {
+        percent = Math.min(92, percent + Math.max(0.4, (92 - percent) * 0.035));
+        setProgress(uploadFill, uploadText, percent);
+
+        if (percent >= 92) {
+          stopUploadFallbackProgress();
+        }
+      }, 450);
+    }
+
+    function stopUploadFallbackProgress() {
+      if (uploadFallbackTimer) {
+        clearInterval(uploadFallbackTimer);
+        uploadFallbackTimer = null;
+      }
     }
 
     function startProgressPolling(jobId) {
@@ -1325,7 +1361,29 @@
         clearInterval(progressTimer);
         progressTimer = null;
       }
+      stopUploadFallbackProgress();
     }
+
+    function cancelActiveJob() {
+      if (!activeJobId || jobFinished) {
+        return;
+      }
+
+      const url = `/api/cancel/${encodeURIComponent(activeJobId)}`;
+
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([], { type: "text/plain" }));
+        return;
+      }
+
+      fetch(url, {
+        method: "POST",
+        keepalive: true,
+      }).catch(() => {});
+    }
+
+    addEventListener("pagehide", cancelActiveJob);
+    addEventListener("beforeunload", cancelActiveJob);
 
     function renderStats(data) {
       const items = [

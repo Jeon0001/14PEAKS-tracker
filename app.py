@@ -78,6 +78,14 @@ def get_job(job_id):
         return dict(job) if job else None
 
 
+def job_cancelled(job_id):
+    if not job_id:
+        return False
+
+    with JOBS_LOCK:
+        return bool(JOBS.get(job_id, {}).get("cancelled"))
+
+
 def configure_tesseract():
     cmd = os.environ.get("TESSERACT_CMD")
     if cmd:
@@ -248,7 +256,7 @@ def request_crop(video_width, video_height):
     return crop
 
 
-def extract_route(video_path, sample_interval_seconds, crop, progress_callback=None):
+def extract_route(video_path, sample_interval_seconds, crop, progress_callback=None, cancel_callback=None):
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
         raise ValueError("Could not open the uploaded video.")
@@ -282,6 +290,9 @@ def extract_route(video_path, sample_interval_seconds, crop, progress_callback=N
             iterable = iter(int, 1)
 
         for frame_index in iterable:
+            if cancel_callback and cancel_callback():
+                raise ValueError("Route generation was cancelled.")
+
             if frame_indices is not None:
                 capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
 
@@ -432,6 +443,7 @@ def process_video():
                 done=False,
                 error=None,
             ),
+            cancel_callback=lambda: job_cancelled(job_id),
         )
         update_job(
             job_id,
@@ -447,7 +459,15 @@ def process_video():
             mimetype="application/json",
         )
     except ValueError as error:
-        update_job(job_id, stage="error", percent=0, message=str(error), done=True, error=True)
+        is_cancelled = job_cancelled(job_id)
+        update_job(
+            job_id,
+            stage="cancelled" if is_cancelled else "error",
+            percent=0,
+            message=str(error),
+            done=True,
+            error=not is_cancelled,
+        )
         return jsonify({"error": str(error)}), 400
     except pytesseract.TesseractNotFoundError:
         update_job(
@@ -483,6 +503,19 @@ def job_progress(job_id):
         )
 
     return jsonify(job)
+
+
+@app.post("/api/cancel/<job_id>")
+def cancel_job(job_id):
+    update_job(
+        job_id,
+        cancelled=True,
+        stage="cancelled",
+        message="Route generation cancelled.",
+        done=True,
+        error=False,
+    )
+    return jsonify({"ok": True})
 
 
 @app.errorhandler(413)
