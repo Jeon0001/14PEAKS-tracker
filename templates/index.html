@@ -913,6 +913,8 @@
     let jobFinished = true;
 
     videoInput.addEventListener("change", () => {
+      const file = videoInput.files[0];
+      if (!validateFileSize(file)) return;
       updateSelectedFileLabel();
       loadCropFrame();
     });
@@ -936,6 +938,8 @@
         return;
       }
 
+      if (!validateFileSize(file)) return;
+
       const transfer = new DataTransfer();
       transfer.items.add(file);
       videoInput.files = transfer.files;
@@ -948,6 +952,8 @@
         showError("Choose a video file first.");
         return;
       }
+
+      if (!validateFileSize(videoInput.files[0])) return;
 
       showStep(2);
     });
@@ -1031,9 +1037,21 @@
       }
     }
 
+    const MAX_UPLOAD_BYTES = {{ max_upload_mb }} * 1024 * 1024;
+
     function updateSelectedFileLabel() {
       const file = videoInput.files[0];
       dropZoneFile.textContent = file ? file.name : "No file selected";
+    }
+
+    function validateFileSize(file) {
+      if (file && file.size > MAX_UPLOAD_BYTES) {
+        showError("File is too large. Maximum size is 1GB.");
+        videoInput.value = "";
+        dropZoneFile.textContent = "No file selected";
+        return false;
+      }
+      return true;
     }
 
     form.addEventListener("submit", async (event) => {
