@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>K2 Route Viewer</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: black; }
+    #info { position: absolute; top: 10px; left: 10px; color: white; font-family: Arial; z-index: 100; }
+    #tooltip {
+      position: absolute; display: none; color: white;
+      background: rgba(0,0,0,0.85); border: 1px solid #ff6600;
+      padding: 7px 9px; border-radius: 6px;
+      font-family: Arial; font-size: 13px; pointer-events: none; z-index: 200;
+    }
+  </style>
+</head>
+<body>
+<div id="info">Loading...</div>
+<div id="tooltip"></div>
+
+<script type="module">
+import * as THREE from "https://esm.sh/three@0.159.0";
+import { OrbitControls } from "https://esm.sh/three@0.159.0/examples/jsm/controls/OrbitControls.js";
+
+try {
+  const route = await fetch("Caseoh_route.json?nocache=" + Date.now()).then(r => r.json());
+
+  document.getElementById("info").innerHTML =
+    `Loaded ${route.length} points<br>Left click rotate | right click pan | scroll zoom<br>Hover dots for coords`;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x111111);
+
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 100000);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+
+  scene.add(new THREE.AmbientLight(0xffffff, 2));
+
+  const minX = Math.min(...route.map(p => p.x));
+  const minY = Math.min(...route.map(p => p.y));
+  const minZ = Math.min(...route.map(p => p.z));
+
+  const pts = route.map(p => new THREE.Vector3(
+    p.x - minX,
+    (p.y - minY) * 0.25,
+    p.z - minZ
+  ));
+
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: 0xff6600 })
+  );
+  scene.add(line);
+
+  const pointMeshes = [];
+  const pointGeo = new THREE.SphereGeometry(3, 10, 10);
+  const pointMat = new THREE.MeshBasicMaterial({ color: 0xff6600 });
+
+  route.forEach((p, i) => {
+    const dot = new THREE.Mesh(pointGeo, pointMat);
+    dot.position.copy(pts[i]);
+    dot.userData.coords = p;
+    dot.userData.index = i + 1;
+    scene.add(dot);
+    pointMeshes.push(dot);
+  });
+
+  const tooltip = document.getElementById("tooltip");
+  const mouse = new THREE.Vector2();
+  const raycaster = new THREE.Raycaster();
+
+  window.addEventListener("mousemove", (event) => {
+    mouse.x = (event.clientX / innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / innerHeight) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects(pointMeshes);
+
+    if (hits.length) {
+      const data = hits[0].object.userData;
+      const p = data.coords;
+      tooltip.style.display = "block";
+      tooltip.style.left = event.clientX + 14 + "px";
+      tooltip.style.top = event.clientY + 14 + "px";
+      tooltip.innerHTML = `Point: ${data.index}<br>X: ${p.x}<br>Y: ${p.y}<br>Z: ${p.z}`;
+    } else {
+      tooltip.style.display = "none";
+    }
+  });
+
+  const box = new THREE.Box3().setFromObject(line);
+  const center = box.getCenter(new THREE.Vector3());
+
+  camera.position.set(center.x + 300, center.y + 200, center.z + 300);
+  controls.target.copy(center);
+  controls.update();
+
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+  addEventListener("resize", () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+
+} catch (err) {
+  document.getElementById("info").innerHTML = "ERROR: " + err.message;
+  console.error(err);
+}
+</script>
+</body>
+</html>
