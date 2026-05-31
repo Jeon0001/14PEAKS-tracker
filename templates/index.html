@@ -1376,8 +1376,7 @@
         height: 940,
       });
 
-      drawExportGrid(ctx);
-      drawExportAxes(ctx);
+      drawCenteredExportAxes(ctx, projected);
       drawExportRoute(ctx, projected.points);
 
       ctx.fillStyle = "#f5f1e8";
@@ -1389,9 +1388,11 @@
       drawExportStat(ctx, "Time", formatDuration(metrics.durationSeconds), 1008, 1538);
       drawExportStat(ctx, "Pace", metrics.paceText, 112, 1710);
 
+      ctx.textAlign = "right";
       ctx.fillStyle = "#9fa5a8";
-      ctx.font = "500 25px Inter, Arial, sans-serif";
-      ctx.fillText("Distance uses the same coordinate-to-meter scale as altitude OCR.", 112, 1890);
+      ctx.font = "700 24px Inter, Arial, sans-serif";
+      ctx.fillText("Credits: .jeon and ylcxzar", width - 112, height - 92);
+      ctx.textAlign = "left";
 
       const link = document.createElement("a");
       link.download = "14peaks-route.png";
@@ -1451,30 +1452,72 @@
       const rawMaxX = Math.max(...raw.map((point) => point.x));
       const rawMinY = Math.min(...raw.map((point) => point.y));
       const rawMaxY = Math.max(...raw.map((point) => point.y));
+      const spanX = maxX - minX;
+      const spanY = maxY - minY;
+      const spanZ = maxZ - minZ;
+      const cubeRaw = [
+        { x: 0, y: 0 },
+        { x: spanX * cos, y: spanX * sin },
+        { x: 0, y: -spanY },
+        { x: -spanZ * cos, y: spanZ * sin },
+        { x: spanX * cos, y: spanX * sin - spanY },
+        { x: (spanX - spanZ) * cos, y: (spanX + spanZ) * sin },
+        { x: -spanZ * cos, y: spanZ * sin - spanY },
+        { x: (spanX - spanZ) * cos, y: (spanX + spanZ) * sin - spanY },
+      ];
+      const allRaw = [...raw, ...cubeRaw];
+      const exportMinX = Math.min(...allRaw.map((point) => point.x));
+      const exportMaxX = Math.max(...allRaw.map((point) => point.x));
+      const exportMinY = Math.min(...allRaw.map((point) => point.y));
+      const exportMaxY = Math.max(...allRaw.map((point) => point.y));
       const scale = Math.min(
-        box.width / Math.max(1, rawMaxX - rawMinX),
-        box.height / Math.max(1, rawMaxY - rawMinY)
+        box.width / Math.max(1, exportMaxX - exportMinX),
+        box.height / Math.max(1, exportMaxY - exportMinY)
       ) * 0.82;
       const centerX = box.left + box.width / 2;
       const centerY = box.top + box.height / 2;
+      const rawCenterX = (exportMinX + exportMaxX) / 2;
+      const rawCenterY = (exportMinY + exportMaxY) / 2;
+      const projectOffsets = (x, y, z) => {
+        const rawPoint = {
+          x: (x - z) * cos,
+          y: (x + z) * sin - y,
+        };
+
+        return {
+          x: centerX + (rawPoint.x - rawCenterX) * scale,
+          y: centerY + (rawPoint.y - rawCenterY) * scale,
+        };
+      };
       const points = raw.map((point) => ({
-        x: centerX + (point.x - (rawMinX + rawMaxX) / 2) * scale,
-        y: centerY + (point.y - (rawMinY + rawMaxY) / 2) * scale,
+        x: centerX + (point.x - rawCenterX) * scale,
+        y: centerY + (point.y - rawCenterY) * scale,
       }));
+      const cube = {
+        o: projectOffsets(0, 0, 0),
+        x: projectOffsets(spanX, 0, 0),
+        y: projectOffsets(0, spanY, 0),
+        z: projectOffsets(0, 0, spanZ),
+        xy: projectOffsets(spanX, spanY, 0),
+        xz: projectOffsets(spanX, 0, spanZ),
+        yz: projectOffsets(0, spanY, spanZ),
+        xyz: projectOffsets(spanX, spanY, spanZ),
+      };
 
       return {
         points,
         origin: points[0],
         scale,
+        cube,
         basis: {
           x: { x: cos * scale, y: sin * scale },
           y: { x: 0, y: -scale },
           z: { x: -cos * scale, y: sin * scale },
         },
         spans: {
-          x: maxX - minX,
-          y: maxY - minY,
-          z: maxZ - minZ,
+          x: spanX,
+          y: spanY,
+          z: spanZ,
         },
       };
     }
@@ -1497,71 +1540,75 @@
       }
     }
 
-    function drawExportGrid(ctx) {
-      const origin = { x: 260, y: 1240 };
-      const xVector = { x: 420, y: 230 };
-      const zVector = { x: -420, y: 230 };
-      const steps = 4;
-
-      ctx.save();
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.07)";
-      ctx.lineWidth = 2;
-
-      for (let index = 0; index <= steps; index += 1) {
-        const xRatio = index / steps;
-        const zRatio = index / steps;
-
-        ctx.beginPath();
-        ctx.moveTo(origin.x + xVector.x * xRatio, origin.y + xVector.y * xRatio);
-        ctx.lineTo(origin.x + xVector.x * xRatio + zVector.x, origin.y + xVector.y * xRatio + zVector.y);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(origin.x + zVector.x * zRatio, origin.y + zVector.y * zRatio);
-        ctx.lineTo(origin.x + zVector.x * zRatio + xVector.x, origin.y + zVector.y * zRatio + xVector.y);
-        ctx.stroke();
-      }
-
-      ctx.restore();
-    }
-
-    function drawExportAxes(ctx) {
-      const origin = { x: 238, y: 1198 };
+    function drawCenteredExportAxes(ctx, projected) {
+      const cube = projected.cube;
+      const frameEdges = [
+        [cube.o, cube.x], [cube.o, cube.y], [cube.o, cube.z],
+        [cube.x, cube.xy], [cube.x, cube.xz],
+        [cube.y, cube.xy], [cube.y, cube.yz],
+        [cube.z, cube.xz], [cube.z, cube.yz],
+        [cube.xy, cube.xyz], [cube.xz, cube.xyz], [cube.yz, cube.xyz],
+      ];
       const axes = [
-        ["X coordinate", { x: 360, y: 196 }, "#60a5fa"],
-        ["Altitude", { x: 0, y: -360 }, "#22c55e"],
-        ["Z coordinate", { x: -360, y: 196 }, "#facc15"],
+        ["X", cube.o, cube.x, "#60a5fa"],
+        ["Altitude", cube.o, cube.y, "#22c55e"],
+        ["Z", cube.o, cube.z, "#facc15"],
       ];
 
-      axes.forEach(([label, basis, color]) => {
-        const end = {
-          x: origin.x + basis.x,
-          y: origin.y + basis.y,
-        };
+      ctx.save();
+      ctx.strokeStyle = "rgba(245, 241, 232, 0.18)";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      frameEdges.forEach(([start, end]) => {
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+      });
+      ctx.restore();
+
+      axes.forEach(([label, start, end, color]) => {
+        const direction = normalizeVector({
+          x: end.x - start.x,
+          y: end.y - start.y,
+        });
         ctx.save();
-        ctx.shadowColor = "rgba(0, 0, 0, 0.55)";
-        ctx.shadowBlur = 14;
+        ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
+        ctx.shadowBlur = 18;
         ctx.strokeStyle = color;
         ctx.lineWidth = 9;
         ctx.lineCap = "round";
         ctx.beginPath();
-        ctx.moveTo(origin.x, origin.y);
+        ctx.moveTo(start.x, start.y);
         ctx.lineTo(end.x, end.y);
         ctx.stroke();
-        drawArrowhead(ctx, origin, end, color);
-        drawAxisLabel(ctx, label, end.x, end.y, color);
+        drawExportArrowhead(ctx, start, end, color);
+
+        ctx.fillStyle = color;
+        ctx.font = "900 30px Inter, Arial, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        drawExportAxisLabel(ctx, label, end.x + direction.x * 44, end.y + direction.y * 44, color);
         ctx.restore();
       });
 
       ctx.fillStyle = "#f5f1e8";
       ctx.beginPath();
-      ctx.arc(origin.x, origin.y, 11, 0, Math.PI * 2);
+      ctx.arc(cube.o.x, cube.o.y, 10, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    function drawArrowhead(ctx, start, end, color) {
+    function normalizeVector(vector) {
+      const length = Math.max(1, Math.hypot(vector.x, vector.y));
+      return {
+        x: vector.x / length,
+        y: vector.y / length,
+      };
+    }
+
+    function drawExportArrowhead(ctx, start, end, color) {
       const angle = Math.atan2(end.y - start.y, end.x - start.x);
-      const size = 26;
+      const size = 25;
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.moveTo(end.x, end.y);
@@ -1571,46 +1618,22 @@
       ctx.fill();
     }
 
-    function drawAxisLabel(ctx, label, x, y, color) {
-      ctx.font = "900 31px Inter, Arial, sans-serif";
+    function drawExportAxisLabel(ctx, label, x, y, color) {
+      ctx.font = "900 30px Inter, Arial, sans-serif";
       const metrics = ctx.measureText(label);
-      const paddingX = 14;
-      const labelWidth = metrics.width + paddingX * 2;
-      const labelHeight = 48;
-      const labelX = x + (x < 238 ? -labelWidth - 18 : 18);
-      const labelY = y - labelHeight / 2;
+      const paddingX = 12;
+      const width = metrics.width + paddingX * 2;
+      const height = 44;
+      const left = x - width / 2;
+      const top = y - height / 2;
 
-      ctx.fillStyle = "rgba(16, 17, 18, 0.86)";
+      ctx.fillStyle = "rgba(16, 17, 18, 0.82)";
+      ctx.fillRect(left, top, width, height);
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
-      roundedRectPath(ctx, labelX, labelY, labelWidth, labelHeight, 10);
-      ctx.fill();
-      ctx.stroke();
-
+      ctx.strokeRect(left, top, width, height);
       ctx.fillStyle = color;
-      ctx.textBaseline = "middle";
-      ctx.fillText(label, labelX + paddingX, labelY + labelHeight / 2);
-      ctx.textBaseline = "alphabetic";
-    }
-
-    function roundedRectPath(ctx, x, y, width, height, radius) {
-      if (ctx.roundRect) {
-        ctx.beginPath();
-        ctx.roundRect(x, y, width, height, radius);
-        return;
-      }
-
-      const safeRadius = Math.min(radius, width / 2, height / 2);
-      ctx.beginPath();
-      ctx.moveTo(x + safeRadius, y);
-      ctx.lineTo(x + width - safeRadius, y);
-      ctx.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
-      ctx.lineTo(x + width, y + height - safeRadius);
-      ctx.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
-      ctx.lineTo(x + safeRadius, y + height);
-      ctx.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
-      ctx.lineTo(x, y + safeRadius);
-      ctx.quadraticCurveTo(x, y, x + safeRadius, y);
+      ctx.fillText(label, x, y + 1);
     }
 
     function drawExportRoute(ctx, points) {
