@@ -1334,6 +1334,250 @@
       stats.hidden = false;
     }
 
+    function downloadRouteImage(route, data) {
+      const canvas = document.createElement("canvas");
+      const width = 1600;
+      const height = 2000;
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      const metrics = calculateRouteMetrics(route, data);
+
+      ctx.fillStyle = "#101112";
+      ctx.fillRect(0, 0, width, height);
+      drawExportBackground(ctx, width, height);
+
+      ctx.fillStyle = "#f97316";
+      ctx.font = "800 82px Inter, Arial, sans-serif";
+      ctx.fillText("14PEAKS", 112, 160);
+      ctx.fillStyle = "#f5f1e8";
+      ctx.fillRect(112, 182, 318, 10);
+
+      ctx.fillStyle = "#c7c1b6";
+      ctx.font = "500 34px Inter, Arial, sans-serif";
+      ctx.fillText("Route Visualizer", 112, 248);
+
+      const projected = projectRouteForExport(route, {
+        left: 170,
+        top: 360,
+        width: 1260,
+        height: 940,
+      });
+
+      drawExportAxes(ctx, projected);
+      drawExportRoute(ctx, projected.points);
+
+      ctx.fillStyle = "#f5f1e8";
+      ctx.font = "800 44px Inter, Arial, sans-serif";
+      ctx.fillText("Route Summary", 112, 1440);
+
+      drawExportStat(ctx, "Distance", `${metrics.distanceKm.toFixed(2)} km`, 112, 1538);
+      drawExportStat(ctx, "Altitude Gain", `${Math.round(metrics.altitudeGainMeters)} m`, 560, 1538);
+      drawExportStat(ctx, "Time", formatDuration(metrics.durationSeconds), 1008, 1538);
+      drawExportStat(ctx, "Pace", metrics.paceText, 112, 1710);
+
+      ctx.fillStyle = "#9fa5a8";
+      ctx.font = "500 25px Inter, Arial, sans-serif";
+      ctx.fillText("Distance uses the same coordinate-to-meter scale as altitude OCR.", 112, 1890);
+
+      const link = document.createElement("a");
+      link.download = "14peaks-route.png";
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    }
+
+    function calculateRouteMetrics(route, data) {
+      const unitsToMeters = 1 / 3.57;
+      let distanceMeters = 0;
+      let altitudeGainMeters = 0;
+
+      for (let index = 1; index < route.length; index += 1) {
+        const previous = route[index - 1];
+        const current = route[index];
+        const dx = current.x - previous.x;
+        const dz = current.z - previous.z;
+        distanceMeters += Math.hypot(dx, dz) * unitsToMeters;
+
+        const dy = current.y - previous.y;
+        if (dy > 0) {
+          altitudeGainMeters += dy * unitsToMeters;
+        }
+      }
+
+      const distanceKm = distanceMeters / 1000;
+      const durationSeconds = data.durationSeconds || 0;
+      const paceSecondsPerKm = distanceKm > 0 ? durationSeconds / distanceKm : 0;
+
+      return {
+        distanceKm,
+        altitudeGainMeters,
+        durationSeconds,
+        paceText: paceSecondsPerKm ? `${formatPace(paceSecondsPerKm)} /km` : "--",
+      };
+    }
+
+    function projectRouteForExport(route, box) {
+      const minX = Math.min(...route.map((point) => point.x));
+      const maxX = Math.max(...route.map((point) => point.x));
+      const minY = Math.min(...route.map((point) => point.y));
+      const maxY = Math.max(...route.map((point) => point.y));
+      const minZ = Math.min(...route.map((point) => point.z));
+      const maxZ = Math.max(...route.map((point) => point.z));
+      const cos = Math.cos(Math.PI / 6);
+      const sin = Math.sin(Math.PI / 6);
+      const raw = route.map((point) => {
+        const x = point.x - minX;
+        const y = point.y - minY;
+        const z = point.z - minZ;
+        return {
+          x: (x - z) * cos,
+          y: (x + z) * sin - y,
+        };
+      });
+      const rawMinX = Math.min(...raw.map((point) => point.x));
+      const rawMaxX = Math.max(...raw.map((point) => point.x));
+      const rawMinY = Math.min(...raw.map((point) => point.y));
+      const rawMaxY = Math.max(...raw.map((point) => point.y));
+      const scale = Math.min(
+        box.width / Math.max(1, rawMaxX - rawMinX),
+        box.height / Math.max(1, rawMaxY - rawMinY)
+      ) * 0.82;
+      const centerX = box.left + box.width / 2;
+      const centerY = box.top + box.height / 2;
+      const points = raw.map((point) => ({
+        x: centerX + (point.x - (rawMinX + rawMaxX) / 2) * scale,
+        y: centerY + (point.y - (rawMinY + rawMaxY) / 2) * scale,
+      }));
+
+      return {
+        points,
+        origin: points[0],
+        scale,
+        basis: {
+          x: { x: cos * scale, y: sin * scale },
+          y: { x: 0, y: -scale },
+          z: { x: -cos * scale, y: sin * scale },
+        },
+        spans: {
+          x: maxX - minX,
+          y: maxY - minY,
+          z: maxZ - minZ,
+        },
+      };
+    }
+
+    function drawExportBackground(ctx, width, height) {
+      const gradient = ctx.createRadialGradient(width * 0.72, height * 0.18, 0, width * 0.72, height * 0.18, width * 0.74);
+      gradient.addColorStop(0, "rgba(249, 115, 22, 0.22)");
+      gradient.addColorStop(0.48, "rgba(96, 165, 250, 0.1)");
+      gradient.addColorStop(1, "rgba(16, 17, 18, 0)");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.055)";
+      ctx.lineWidth = 2;
+      for (let x = -height; x < width; x += 92) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + height, height);
+        ctx.stroke();
+      }
+    }
+
+    function drawExportAxes(ctx, projected) {
+      const axisLength = 160;
+      const origin = {
+        x: projected.origin.x - 80,
+        y: projected.origin.y + 90,
+      };
+      const axes = [
+        ["X", projected.basis.x, "#60a5fa"],
+        ["Altitude", projected.basis.y, "#22c55e"],
+        ["Z", projected.basis.z, "#facc15"],
+      ];
+
+      axes.forEach(([label, basis, color]) => {
+        const length = axisLength / Math.max(1, Math.hypot(basis.x, basis.y));
+        const end = {
+          x: origin.x + basis.x * length,
+          y: origin.y + basis.y * length,
+        };
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(origin.x, origin.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+
+        ctx.fillStyle = color;
+        ctx.font = "800 28px Inter, Arial, sans-serif";
+        ctx.fillText(label, end.x + 12, end.y + 8);
+      });
+    }
+
+    function drawExportRoute(ctx, points) {
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.shadowColor = "rgba(249, 115, 22, 0.55)";
+      ctx.shadowBlur = 24;
+      ctx.strokeStyle = "#f97316";
+      ctx.lineWidth = 12;
+      ctx.beginPath();
+      points.forEach((point, index) => {
+        if (index === 0) {
+          ctx.moveTo(point.x, point.y);
+        } else {
+          ctx.lineTo(point.x, point.y);
+        }
+      });
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      const start = points[0];
+      const finish = points[points.length - 1];
+      drawExportPoint(ctx, start, "#60a5fa");
+      drawExportPoint(ctx, finish, "#f97316");
+    }
+
+    function drawExportPoint(ctx, point, color) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#101112";
+      ctx.lineWidth = 5;
+      ctx.stroke();
+    }
+
+    function drawExportStat(ctx, label, value, x, y) {
+      ctx.fillStyle = "#9fa5a8";
+      ctx.font = "700 26px Inter, Arial, sans-serif";
+      ctx.fillText(label.toUpperCase(), x, y);
+      ctx.fillStyle = "#f5f1e8";
+      ctx.font = "900 58px Inter, Arial, sans-serif";
+      ctx.fillText(value, x, y + 70);
+    }
+
+    function formatDuration(seconds) {
+      const safeSeconds = Math.max(0, Math.round(seconds || 0));
+      const hours = Math.floor(safeSeconds / 3600);
+      const minutes = Math.floor((safeSeconds % 3600) / 60);
+      const remainingSeconds = safeSeconds % 60;
+
+      if (hours) {
+        return `${hours}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+      }
+
+      return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+    }
+
+    function formatPace(secondsPerKm) {
+      const safeSeconds = Math.max(0, Math.round(secondsPerKm || 0));
+      const minutes = Math.floor(safeSeconds / 60);
+      const seconds = safeSeconds % 60;
+      return `${minutes}:${String(seconds).padStart(2, "0")}`;
+    }
+
     function resetViewer() {
       if (animationId) {
         cancelAnimationFrame(animationId);
