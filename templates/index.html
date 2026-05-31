@@ -246,6 +246,17 @@
       animation: titleRise 650ms ease 120ms both;
     }
 
+    .intro-credits {
+      margin: -4px 0 18px;
+      color: #9fa5a8;
+      font-size: 14px;
+      animation: titleRise 650ms ease 170ms both;
+    }
+
+    .intro-credits strong {
+      color: #f97316;
+    }
+
     .intro-step .flow-kicker,
     .intro-step .step-actions {
       justify-content: center;
@@ -718,6 +729,7 @@
             <div class="flow-kicker">14PEAKS route analysis</div>
             <h1 class="intro-title">14Peaks Route Visualizer</h1>
             <p class="intro-copy">Turn a 1080p route video into an interactive 3D path using the altitude and coordinate HUD.</p>
+            <p class="intro-credits">Main developers: <strong>.jeon</strong> and <strong>ylcxz</strong></p>
           </div>
           <div class="step-actions">
             <button id="start-flow" type="button">Next</button>
@@ -1364,7 +1376,8 @@
         height: 940,
       });
 
-      drawExportAxes(ctx, projected);
+      drawExportGrid(ctx);
+      drawExportAxes(ctx);
       drawExportRoute(ctx, projected.points);
 
       ctx.fillStyle = "#f5f1e8";
@@ -1484,35 +1497,120 @@
       }
     }
 
-    function drawExportAxes(ctx, projected) {
-      const axisLength = 160;
-      const origin = {
-        x: projected.origin.x - 80,
-        y: projected.origin.y + 90,
-      };
+    function drawExportGrid(ctx) {
+      const origin = { x: 260, y: 1240 };
+      const xVector = { x: 420, y: 230 };
+      const zVector = { x: -420, y: 230 };
+      const steps = 4;
+
+      ctx.save();
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.07)";
+      ctx.lineWidth = 2;
+
+      for (let index = 0; index <= steps; index += 1) {
+        const xRatio = index / steps;
+        const zRatio = index / steps;
+
+        ctx.beginPath();
+        ctx.moveTo(origin.x + xVector.x * xRatio, origin.y + xVector.y * xRatio);
+        ctx.lineTo(origin.x + xVector.x * xRatio + zVector.x, origin.y + xVector.y * xRatio + zVector.y);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(origin.x + zVector.x * zRatio, origin.y + zVector.y * zRatio);
+        ctx.lineTo(origin.x + zVector.x * zRatio + xVector.x, origin.y + zVector.y * zRatio + xVector.y);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+
+    function drawExportAxes(ctx) {
+      const origin = { x: 238, y: 1198 };
       const axes = [
-        ["X", projected.basis.x, "#60a5fa"],
-        ["Altitude", projected.basis.y, "#22c55e"],
-        ["Z", projected.basis.z, "#facc15"],
+        ["X coordinate", { x: 360, y: 196 }, "#60a5fa"],
+        ["Altitude", { x: 0, y: -360 }, "#22c55e"],
+        ["Z coordinate", { x: -360, y: 196 }, "#facc15"],
       ];
 
       axes.forEach(([label, basis, color]) => {
-        const length = axisLength / Math.max(1, Math.hypot(basis.x, basis.y));
         const end = {
-          x: origin.x + basis.x * length,
-          y: origin.y + basis.y * length,
+          x: origin.x + basis.x,
+          y: origin.y + basis.y,
         };
+        ctx.save();
+        ctx.shadowColor = "rgba(0, 0, 0, 0.55)";
+        ctx.shadowBlur = 14;
         ctx.strokeStyle = color;
-        ctx.lineWidth = 5;
+        ctx.lineWidth = 9;
+        ctx.lineCap = "round";
         ctx.beginPath();
         ctx.moveTo(origin.x, origin.y);
         ctx.lineTo(end.x, end.y);
         ctx.stroke();
-
-        ctx.fillStyle = color;
-        ctx.font = "800 28px Inter, Arial, sans-serif";
-        ctx.fillText(label, end.x + 12, end.y + 8);
+        drawArrowhead(ctx, origin, end, color);
+        drawAxisLabel(ctx, label, end.x, end.y, color);
+        ctx.restore();
       });
+
+      ctx.fillStyle = "#f5f1e8";
+      ctx.beginPath();
+      ctx.arc(origin.x, origin.y, 11, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawArrowhead(ctx, start, end, color) {
+      const angle = Math.atan2(end.y - start.y, end.x - start.x);
+      const size = 26;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(end.x, end.y);
+      ctx.lineTo(end.x - Math.cos(angle - Math.PI / 7) * size, end.y - Math.sin(angle - Math.PI / 7) * size);
+      ctx.lineTo(end.x - Math.cos(angle + Math.PI / 7) * size, end.y - Math.sin(angle + Math.PI / 7) * size);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function drawAxisLabel(ctx, label, x, y, color) {
+      ctx.font = "900 31px Inter, Arial, sans-serif";
+      const metrics = ctx.measureText(label);
+      const paddingX = 14;
+      const labelWidth = metrics.width + paddingX * 2;
+      const labelHeight = 48;
+      const labelX = x + (x < 238 ? -labelWidth - 18 : 18);
+      const labelY = y - labelHeight / 2;
+
+      ctx.fillStyle = "rgba(16, 17, 18, 0.86)";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      roundedRectPath(ctx, labelX, labelY, labelWidth, labelHeight, 10);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = color;
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, labelX + paddingX, labelY + labelHeight / 2);
+      ctx.textBaseline = "alphabetic";
+    }
+
+    function roundedRectPath(ctx, x, y, width, height, radius) {
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, radius);
+        return;
+      }
+
+      const safeRadius = Math.min(radius, width / 2, height / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + safeRadius, y);
+      ctx.lineTo(x + width - safeRadius, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+      ctx.lineTo(x + width, y + height - safeRadius);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+      ctx.lineTo(x + safeRadius, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+      ctx.lineTo(x, y + safeRadius);
+      ctx.quadraticCurveTo(x, y, x + safeRadius, y);
     }
 
     function drawExportRoute(ctx, points) {
