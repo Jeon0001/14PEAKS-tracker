@@ -1,14 +1,17 @@
 import json
 import os
 import re
+import secrets
 import tempfile
 import threading
 import time
+from functools import wraps
 from pathlib import Path
 
 import cv2
 import pytesseract
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from werkzeug.security import check_password_hash
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -24,6 +27,10 @@ MAX_CONTENT_LENGTH = int(os.environ.get("MAX_UPLOAD_BYTES", 1_000_000_000))
 EXPECTED_WIDTH = 1920
 EXPECTED_HEIGHT = 1080
 EXPECTED_RESOLUTION_LABEL = "1080p (1920x1080)"
+ACCESS_PASSWORD_HASH = os.environ.get(
+    "ACCESS_PASSWORD_HASH",
+    "scrypt:32768:8:1$Th5CJULbcz4l1cLD$95464b5d94fbfaf853bf870a222012fe24349ddc736c8cbde6e0d0c2e9eab1a0a8f4ebdcc7236b5d56dd28a82267c1b2cbe4c411e40ae85db395c17c8682b595",
+)
 
 ALTITUDE_TO_STUDS = float(os.environ.get("ALTITUDE_TO_STUDS", "3.57"))
 MIN_ALTITUDE_METERS = int(os.environ.get("MIN_ALTITUDE_METERS", "3000"))
@@ -47,6 +54,10 @@ REFERENCE_HUD_CROP = {
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "false").lower() == "true"
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
@@ -89,6 +100,24 @@ def job_cancelled(job_id):
 
     with JOBS_LOCK:
         return bool(JOBS.get(job_id, {}).get("cancelled"))
+
+
+def authenticated():
+    return session.get("authenticated") is True
+
+
+def require_auth(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if authenticated():
+            return view(*args, **kwargs)
+
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Password required."}), 401
+
+        return redirect(url_for("login"))
+
+    return wrapped
 
 
 def configure_tesseract():
@@ -369,7 +398,34 @@ def allowed_video(filename):
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
 
 
+@app.get("/login")
+def login():
+    if authenticated():
+        return redirect(url_for("index"))
+
+    return render_template("login.html", error=None)
+
+
+@app.post("/login")
+def login_submit():
+    password = request.form.get("password", "")
+
+    if check_password_hash(ACCESS_PASSWORD_HASH, password):
+        session.clear()
+        session["authenticated"] = True
+        return redirect(url_for("index"))
+
+    return render_template("login.html", error="Incorrect password."), 401
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.get("/")
+@require_auth
 def index():
     return render_template(
         "index.html",
@@ -381,11 +437,13 @@ def index():
 
 
 @app.get("/images/<path:filename>")
+@require_auth
 def images(filename):
     return send_from_directory(BASE_DIR / "images", filename)
 
 
 @app.post("/api/process")
+@require_auth
 def process_video():
     prune_jobs()
     job_id = request.form.get("job_id", "").strip()
@@ -501,6 +559,7 @@ def process_video():
 
 
 @app.get("/api/progress/<job_id>")
+@require_auth
 def job_progress(job_id):
     job = get_job(job_id)
 
@@ -519,6 +578,7 @@ def job_progress(job_id):
 
 
 @app.post("/api/cancel/<job_id>")
+@require_auth
 def cancel_job(job_id):
     update_job(
         job_id,
