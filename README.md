@@ -31,4 +31,4 @@ COORD_MODEL=2Kor
 
 Uploaded videos are saved only to a temporary file while OCR runs. The temp file is deleted in a `finally` block after processing succeeds or fails. Generated route points are returned directly to the browser and are not persisted on the server.
 
-#Created by .jeon and ylcxzar
+# Created by .jeon and ylcxzar
