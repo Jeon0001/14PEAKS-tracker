@@ -1303,6 +1303,7 @@
         chunkForm.append("job_id", jobId);
         chunkForm.append("chunk_index", String(index));
         chunkForm.append("total_chunks", String(totalChunks));
+        chunkForm.append("total_size", String(file.size));
         chunkForm.append("filename", file.name);
         chunkForm.append("chunk", chunkBlob, file.name);
 

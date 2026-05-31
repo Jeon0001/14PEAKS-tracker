@@ -63,9 +63,11 @@ JOBS = {}
 JOBS_LOCK = threading.Lock()
 JOB_TTL_SECONDS = 15 * 60
 
-# Tracks in-progress chunked uploads: job_id -> {"temp_path": str, "received": int, "total": int, "suffix": str}
+# Tracks in-progress chunked uploads until processing starts.
 CHUNK_UPLOADS = {}
 CHUNK_UPLOADS_LOCK = threading.Lock()
+CHUNK_UPLOAD_TTL_SECONDS = 30 * 60
+CHUNK_SIZE = 10 * 1024 * 1024
 
 
 def prune_jobs():
@@ -80,6 +82,36 @@ def prune_jobs():
 
         for job_id in stale_ids:
             JOBS.pop(job_id, None)
+
+
+def delete_file(path):
+    if path and os.path.exists(path):
+        os.remove(path)
+
+
+def cleanup_chunk_upload(job_id):
+    with CHUNK_UPLOADS_LOCK:
+        upload_state = CHUNK_UPLOADS.pop(job_id, None)
+
+    if upload_state:
+        delete_file(upload_state.get("temp_path"))
+
+
+def prune_chunk_uploads():
+    cutoff = time.time() - CHUNK_UPLOAD_TTL_SECONDS
+
+    with CHUNK_UPLOADS_LOCK:
+        stale_uploads = [
+            (job_id, upload_state)
+            for job_id, upload_state in CHUNK_UPLOADS.items()
+            if upload_state.get("updatedAt", 0) < cutoff
+        ]
+
+        for job_id, _upload_state in stale_uploads:
+            CHUNK_UPLOADS.pop(job_id, None)
+
+    for _job_id, upload_state in stale_uploads:
+        delete_file(upload_state.get("temp_path"))
 
 
 def update_job(job_id, **updates):
@@ -449,6 +481,7 @@ def images(filename):
 @app.post("/api/upload-chunk")
 @require_auth
 def upload_chunk():
+    prune_chunk_uploads()
     """Receive a single chunk of a chunked video upload.
 
     Expected form fields:
@@ -465,11 +498,18 @@ def upload_chunk():
     try:
         chunk_index = int(request.form.get("chunk_index", -1))
         total_chunks = int(request.form.get("total_chunks", 0))
+        total_size = int(request.form.get("total_size", 0))
     except (TypeError, ValueError):
-        return jsonify({"error": "Invalid chunk_index or total_chunks."}), 400
+        return jsonify({"error": "Invalid chunk upload parameters."}), 400
 
     if chunk_index < 0 or total_chunks <= 0 or chunk_index >= total_chunks:
         return jsonify({"error": "Invalid chunk parameters."}), 400
+
+    if total_size <= 0 or total_size > MAX_CONTENT_LENGTH:
+        return jsonify({"error": f"File is too large. Limit is {round(MAX_CONTENT_LENGTH / 1024 / 1024)} MB."}), 413
+
+    if total_chunks > ((MAX_CONTENT_LENGTH + CHUNK_SIZE - 1) // CHUNK_SIZE):
+        return jsonify({"error": "Too many upload chunks."}), 413
 
     filename = request.form.get("filename", "").strip()
     if not filename or not allowed_video(filename):
@@ -488,29 +528,37 @@ def upload_chunk():
             os.close(temp_fd)
             CHUNK_UPLOADS[job_id] = {
                 "temp_path": temp_path,
-                "received": 0,
+                "received_indexes": set(),
                 "total": total_chunks,
+                "total_size": total_size,
                 "suffix": suffix,
+                "updatedAt": time.time(),
             }
         upload_state = CHUNK_UPLOADS[job_id]
 
+        if upload_state["total"] != total_chunks or upload_state["total_size"] != total_size:
+            return jsonify({"error": "Chunk upload metadata changed during upload."}), 400
+
     # Write this chunk at the correct byte offset.
     chunk_data = chunk_file.read()
-    chunk_size = 10 * 1024 * 1024  # must match client CHUNK_SIZE
-    offset = chunk_index * chunk_size
+    offset = chunk_index * CHUNK_SIZE
+
+    if offset + len(chunk_data) > total_size:
+        return jsonify({"error": "Chunk exceeds declared file size."}), 400
 
     with open(upload_state["temp_path"], "r+b") as fh:
         fh.seek(offset)
         fh.write(chunk_data)
 
     with CHUNK_UPLOADS_LOCK:
-        upload_state["received"] += 1
-        received = upload_state["received"]
+        upload_state["received_indexes"].add(chunk_index)
+        upload_state["updatedAt"] = time.time()
+        received = len(upload_state["received_indexes"])
 
     update_job(
         job_id,
         stage="uploading",
-        percent=0,
+        percent=round(received * 100 / total_chunks),
         message=f"Receiving chunks ({received}/{total_chunks})...",
         done=False,
         error=None,
@@ -587,14 +635,14 @@ def _run_processing(job_id, temp_path, sample_interval, crop_params):
     except pytesseract.TesseractError as error:
         update_job(job_id, stage="error", percent=0, message=f"Tesseract OCR failed: {error}", done=True, error=True)
     finally:
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
+        delete_file(temp_path)
 
 
 @app.post("/api/process")
 @require_auth
 def process_video():
     prune_jobs()
+    prune_chunk_uploads()
     job_id = request.form.get("job_id", "").strip()
 
     # --- Chunked-upload path: file was already assembled via /api/upload-chunk ---
@@ -604,11 +652,10 @@ def process_video():
     if chunk_state is not None:
         temp_path = chunk_state["temp_path"]
 
-        if chunk_state["received"] < chunk_state["total"]:
+        if len(chunk_state["received_indexes"]) < chunk_state["total"]:
             message = "Not all chunks have been received yet."
             update_job(job_id, stage="error", percent=0, message=message, done=True, error=True)
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            delete_file(temp_path)
             return jsonify({"error": message}), 400
 
         sample_interval = float(request.form.get("sample_interval", "0.5"))
@@ -645,7 +692,15 @@ def process_video():
 
         job = get_job(job_id)
         if job is None or not job.get("done"):
-            update_job(job_id, stage="error", percent=0, message="Processing timed out.", done=True, error=True)
+            update_job(
+                job_id,
+                cancelled=True,
+                stage="error",
+                percent=0,
+                message="Processing timed out.",
+                done=True,
+                error=True,
+            )
             return jsonify({"error": "Processing timed out."}), 504
 
         if job.get("error"):
@@ -771,13 +826,13 @@ def process_video():
         update_job(job_id, stage="error", percent=0, message=f"Tesseract OCR failed: {error}", done=True, error=True)
         return jsonify({"error": f"Tesseract OCR failed: {error}"}), 500
     finally:
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
+        delete_file(temp_path)
 
 
 @app.get("/api/progress/<job_id>")
 @require_auth
 def job_progress(job_id):
+    prune_chunk_uploads()
     job = get_job(job_id)
 
     if not job:
@@ -797,6 +852,7 @@ def job_progress(job_id):
 @app.post("/api/cancel/<job_id>")
 @require_auth
 def cancel_job(job_id):
+    cleanup_chunk_upload(job_id)
     update_job(
         job_id,
         cancelled=True,
