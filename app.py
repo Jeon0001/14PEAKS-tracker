@@ -15,7 +15,12 @@ BASE_DIR = Path(__file__).resolve().parent
 TESSDATA_DIR = BASE_DIR / "Tesseract Data"
 
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
-MAX_CONTENT_LENGTH = int(os.environ.get("MAX_UPLOAD_BYTES", 750 * 1024 * 1024))
+MAX_CONTENT_LENGTH = int(os.environ.get("MAX_UPLOAD_BYTES", 1_000_000_000))
+# Resource note: each upload streams ~1 GB into RAM while OpenCV reads the temp file,
+# plus disk space for the temp file itself.  A single replica can comfortably handle
+# 1–2 concurrent 1 GB uploads before memory pressure becomes a concern.  Scale to
+# multiple replicas (or increase Railway memory limits) for production workloads with
+# many simultaneous users.
 EXPECTED_WIDTH = 1920
 EXPECTED_HEIGHT = 1080
 EXPECTED_RESOLUTION_LABEL = "1080p (1920x1080)"
@@ -401,6 +406,14 @@ def process_video():
     if not allowed_video(upload.filename):
         update_job(job_id, stage="error", percent=0, message="Unsupported video type.", done=True, error=True)
         return jsonify({"error": "Unsupported video type."}), 400
+
+    upload.stream.seek(0, 2)
+    file_size = upload.stream.tell()
+    upload.stream.seek(0)
+    if file_size > 1_000_000_000:
+        message = "File is too large. Maximum size is 1GB."
+        update_job(job_id, stage="error", percent=0, message=message, done=True, error=True)
+        return jsonify({"error": message}), 413
 
     sample_interval = float(request.form.get("sample_interval", "0.5"))
     sample_interval = max(0.1, min(sample_interval, 5.0))
