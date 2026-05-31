@@ -1,4 +1,4 @@
-# 14PEAKS Route Builder
+# 14PEAKS Route Visualizer
 
 Upload a 1080p (1920x1080) route video, OCR the HUD coordinates, and render the extracted route as an interactive Three.js path.
 
@@ -15,20 +15,42 @@ Open `http://localhost:5000`.
 
 ## Railway Deploy
 
-Railway can deploy this as a Python app. The included files are the important pieces:
+Railway can deploy this app directly from GitHub. This repo includes a `Dockerfile`, so Railway will build a container that installs Python, Tesseract OCR, OpenCV system libraries, and the Python dependencies.
 
-- `Procfile` runs Gunicorn.
-- `requirements.txt` installs Flask, OpenCV, and OCR bindings.
-- `nixpacks.toml` installs the system Tesseract binary.
+- `Dockerfile` installs Tesseract and runs Gunicorn.
+- `Procfile` is kept as a fallback start command for Python/Nixpacks-style deploys.
+- `requirements.txt` installs Flask, Gunicorn, OpenCV, and OCR bindings.
 - `Tesseract Data/` provides the custom OCR traineddata files.
+- `images/` provides the crop example image used by the UI.
 
-The app accepts only `1080p (1920x1080)` videos. You can configure upload size and OCR model with Railway environment variables:
+### Steps
+
+1. Push this repo to GitHub.
+2. Go to Railway and create a new project.
+3. Choose **Deploy from GitHub repo**.
+4. Select this repository.
+5. Railway should detect the `Dockerfile` and build the app.
+6. After deployment, open the generated Railway domain.
+
+### Environment Variables
+
+The app accepts only `1080p (1920x1080)` videos. Optional Railway variables:
 
 ```text
 MAX_UPLOAD_BYTES=786432000
 COORD_MODEL=2Kor
 ```
 
+`MAX_UPLOAD_BYTES` controls max upload size. The default is about 750 MB.
+
+`COORD_MODEL` controls the Tesseract traineddata model. Leave it unset unless you need to force a specific file from `Tesseract Data/`.
+
 Uploaded videos are saved only to a temporary file while OCR runs. The temp file is deleted in a `finally` block after processing succeeds or fails. Generated route points are returned directly to the browser and are not persisted on the server.
+
+### Notes
+
+- Large videos can take a while to process, so Gunicorn is configured with a longer timeout.
+- The app uses one Gunicorn worker by default to avoid multiple large OCR/video jobs exhausting small Railway containers.
+- If deployment fails, check the Railway build logs first for Tesseract or OpenCV package errors.
 
 # Created by .jeon and ylcxzar
