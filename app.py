@@ -63,6 +63,10 @@ JOBS = {}
 JOBS_LOCK = threading.Lock()
 JOB_TTL_SECONDS = 15 * 60
 
+# Tracks in-progress chunked uploads: job_id -> {"temp_path": str, "received": int, "total": int, "suffix": str}
+CHUNK_UPLOADS = {}
+CHUNK_UPLOADS_LOCK = threading.Lock()
+
 
 def prune_jobs():
     cutoff = time.time() - JOB_TTL_SECONDS
@@ -442,11 +446,222 @@ def images(filename):
     return send_from_directory(BASE_DIR / "images", filename)
 
 
+@app.post("/api/upload-chunk")
+@require_auth
+def upload_chunk():
+    """Receive a single chunk of a chunked video upload.
+
+    Expected form fields:
+      - job_id:       unique job identifier
+      - chunk_index:  0-based index of this chunk
+      - total_chunks: total number of chunks
+      - filename:     original filename (used for extension)
+      - chunk:        the binary chunk data (file field)
+    """
+    job_id = request.form.get("job_id", "").strip()
+    if not job_id:
+        return jsonify({"error": "Missing job_id."}), 400
+
+    try:
+        chunk_index = int(request.form.get("chunk_index", -1))
+        total_chunks = int(request.form.get("total_chunks", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid chunk_index or total_chunks."}), 400
+
+    if chunk_index < 0 or total_chunks <= 0 or chunk_index >= total_chunks:
+        return jsonify({"error": "Invalid chunk parameters."}), 400
+
+    filename = request.form.get("filename", "").strip()
+    if not filename or not allowed_video(filename):
+        return jsonify({"error": "Unsupported or missing filename."}), 400
+
+    chunk_file = request.files.get("chunk")
+    if chunk_file is None:
+        return jsonify({"error": "Missing chunk data."}), 400
+
+    suffix = Path(filename).suffix.lower()
+
+    with CHUNK_UPLOADS_LOCK:
+        if job_id not in CHUNK_UPLOADS:
+            # First chunk — create the temp file
+            temp_fd, temp_path = tempfile.mkstemp(suffix=suffix)
+            os.close(temp_fd)
+            CHUNK_UPLOADS[job_id] = {
+                "temp_path": temp_path,
+                "received": 0,
+                "total": total_chunks,
+                "suffix": suffix,
+            }
+        upload_state = CHUNK_UPLOADS[job_id]
+
+    # Write this chunk at the correct byte offset.
+    chunk_data = chunk_file.read()
+    chunk_size = 10 * 1024 * 1024  # must match client CHUNK_SIZE
+    offset = chunk_index * chunk_size
+
+    with open(upload_state["temp_path"], "r+b") as fh:
+        fh.seek(offset)
+        fh.write(chunk_data)
+
+    with CHUNK_UPLOADS_LOCK:
+        upload_state["received"] += 1
+        received = upload_state["received"]
+
+    update_job(
+        job_id,
+        stage="uploading",
+        percent=0,
+        message=f"Receiving chunks ({received}/{total_chunks})...",
+        done=False,
+        error=None,
+    )
+
+    return jsonify({"ok": True, "received": received, "total": total_chunks, "complete": received >= total_chunks})
+
+
+def _run_processing(job_id, temp_path, sample_interval, crop_params):
+    """Background thread: validate video dimensions, extract route, update job state."""
+    try:
+        capture = cv2.VideoCapture(temp_path)
+        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        capture.release()
+
+        if width != EXPECTED_WIDTH or height != EXPECTED_HEIGHT:
+            message = (
+                f"Only {EXPECTED_RESOLUTION_LABEL} videos are accepted. "
+                f"This file is {width}x{height}."
+            )
+            update_job(job_id, stage="error", percent=0, message=message, done=True, error=True)
+            return
+
+        crop = {
+            "left": max(0, min(crop_params["left"], width - 1)),
+            "top": max(0, min(crop_params["top"], height - 1)),
+            "width": max(1, min(crop_params["width"], width - max(0, min(crop_params["left"], width - 1)))),
+            "height": max(1, min(crop_params["height"], height - max(0, min(crop_params["top"], height - 1)))),
+        }
+
+        result = extract_route(
+            temp_path,
+            sample_interval,
+            crop,
+            progress_callback=lambda percent, message: update_job(
+                job_id,
+                stage="processing",
+                percent=percent,
+                message=message,
+                done=False,
+                error=None,
+            ),
+            cancel_callback=lambda: job_cancelled(job_id),
+        )
+        update_job(
+            job_id,
+            stage="done",
+            percent=100,
+            message="Route generated.",
+            done=True,
+            error=False,
+            result=result,
+        )
+    except ValueError as error:
+        is_cancelled = job_cancelled(job_id)
+        update_job(
+            job_id,
+            stage="cancelled" if is_cancelled else "error",
+            percent=0,
+            message=str(error),
+            done=True,
+            error=not is_cancelled,
+        )
+    except pytesseract.TesseractNotFoundError:
+        update_job(
+            job_id,
+            stage="error",
+            percent=0,
+            message="Tesseract OCR is not installed or is not in PATH.",
+            done=True,
+            error=True,
+        )
+    except pytesseract.TesseractError as error:
+        update_job(job_id, stage="error", percent=0, message=f"Tesseract OCR failed: {error}", done=True, error=True)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 @app.post("/api/process")
 @require_auth
 def process_video():
     prune_jobs()
     job_id = request.form.get("job_id", "").strip()
+
+    # --- Chunked-upload path: file was already assembled via /api/upload-chunk ---
+    with CHUNK_UPLOADS_LOCK:
+        chunk_state = CHUNK_UPLOADS.pop(job_id, None)
+
+    if chunk_state is not None:
+        temp_path = chunk_state["temp_path"]
+
+        if chunk_state["received"] < chunk_state["total"]:
+            message = "Not all chunks have been received yet."
+            update_job(job_id, stage="error", percent=0, message=message, done=True, error=True)
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            return jsonify({"error": message}), 400
+
+        sample_interval = float(request.form.get("sample_interval", "0.5"))
+        sample_interval = max(0.1, min(sample_interval, 5.0))
+
+        try:
+            crop_params = {
+                "left": int(request.form.get("crop_left", 0)),
+                "top": int(request.form.get("crop_top", 0)),
+                "width": int(request.form.get("crop_width", 100)),
+                "height": int(request.form.get("crop_height", 100)),
+            }
+        except (TypeError, ValueError):
+            crop_params = {"left": 0, "top": 0, "width": 100, "height": 100}
+
+        update_job(
+            job_id,
+            stage="processing",
+            percent=0,
+            message="Upload complete. Preparing route calculation...",
+            done=False,
+            error=None,
+        )
+
+        thread = threading.Thread(
+            target=_run_processing,
+            args=(job_id, temp_path, sample_interval, crop_params),
+            daemon=True,
+        )
+        thread.start()
+
+        # Long-poll: wait for the background thread to finish (up to 10 min)
+        thread.join(timeout=600)
+
+        job = get_job(job_id)
+        if job is None or not job.get("done"):
+            update_job(job_id, stage="error", percent=0, message="Processing timed out.", done=True, error=True)
+            return jsonify({"error": "Processing timed out."}), 504
+
+        if job.get("error"):
+            return jsonify({"error": job.get("message", "Route generation failed.")}), 400
+
+        result = job.get("result")
+        if not result:
+            return jsonify({"error": "Route generation produced no result."}), 500
+
+        return app.response_class(
+            response=json.dumps(result),
+            status=200,
+            mimetype="application/json",
+        )
+
+    # --- Legacy single-request path (kept for backwards compatibility) ---
     update_job(
         job_id,
         stage="processing",
@@ -500,6 +715,8 @@ def process_video():
                     "error": message
                 }
             ), 400
+
+
 
         crop = request_crop(width, height)
         result = extract_route(

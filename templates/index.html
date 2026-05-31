@@ -900,7 +900,6 @@
     let animationId;
     let pointMeshes = [];
     let progressTimer;
-    let uploadFallbackTimer;
     let cropVideo;
     let cropVideoUrl;
     let cropFrameReady = false;
@@ -1284,70 +1283,80 @@
       text.textContent = `${safePercent}%`;
     }
 
-    function uploadAndProcess(formData) {
-      return new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/process");
-        xhr.responseType = "json";
-        startUploadFallbackProgress();
+    const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB per chunk
 
-        xhr.upload.addEventListener("progress", (event) => {
-          if (!event.lengthComputable) {
-            return;
-          }
+    async function uploadAndProcess(formData) {
+      const file = formData.get("video");
+      const jobId = formData.get("job_id");
 
-          stopUploadFallbackProgress();
-          const percent = event.loaded * 100 / event.total;
-          setProgress(uploadFill, uploadText, percent);
+      // --- Chunked upload ---
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      status.textContent = "Uploading video in chunks...";
+      setProgress(uploadFill, uploadText, 0);
 
-          if (percent >= 100) {
-            status.textContent = "Upload complete. Calculating route path...";
-          }
+      for (let index = 0; index < totalChunks; index++) {
+        const start = index * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunkBlob = file.slice(start, end);
+
+        const chunkForm = new FormData();
+        chunkForm.append("job_id", jobId);
+        chunkForm.append("chunk_index", String(index));
+        chunkForm.append("total_chunks", String(totalChunks));
+        chunkForm.append("filename", file.name);
+        chunkForm.append("chunk", chunkBlob, file.name);
+
+        const response = await fetch("/api/upload-chunk", {
+          method: "POST",
+          body: chunkForm,
         });
 
-        xhr.addEventListener("load", () => {
-          stopUploadFallbackProgress();
-          const payload = xhr.response || {};
-
-          if (xhr.status < 200 || xhr.status >= 300) {
-            reject(new Error(payload.error || "Route generation failed."));
-            return;
+        if (!response.ok) {
+          let errorMessage = "Chunk upload failed.";
+          try {
+            const data = await response.json();
+            errorMessage = data.error || errorMessage;
+          } catch (_parseError) {
+            // ignore
           }
-
-          setProgress(uploadFill, uploadText, 100);
-          setProgress(processFill, processText, 100);
-          resolve(payload);
-        });
-
-        xhr.addEventListener("error", () => {
-          stopUploadFallbackProgress();
-          reject(new Error("Upload failed. Check the server and try again."));
-        });
-
-        xhr.send(formData);
-      });
-    }
-
-    function startUploadFallbackProgress() {
-      stopUploadFallbackProgress();
-      let percent = 1;
-      setProgress(uploadFill, uploadText, percent);
-
-      uploadFallbackTimer = setInterval(() => {
-        percent = Math.min(92, percent + Math.max(0.4, (92 - percent) * 0.035));
-        setProgress(uploadFill, uploadText, percent);
-
-        if (percent >= 92) {
-          stopUploadFallbackProgress();
+          throw new Error(errorMessage);
         }
-      }, 450);
-    }
 
-    function stopUploadFallbackProgress() {
-      if (uploadFallbackTimer) {
-        clearInterval(uploadFallbackTimer);
-        uploadFallbackTimer = null;
+        const uploadPercent = ((index + 1) / totalChunks) * 100;
+        setProgress(uploadFill, uploadText, uploadPercent);
+
+        if (uploadPercent >= 100) {
+          status.textContent = "Upload complete. Calculating route path...";
+        } else {
+          status.textContent = `Uploading chunk ${index + 1} of ${totalChunks}...`;
+        }
       }
+
+      setProgress(uploadFill, uploadText, 100);
+
+      // --- Trigger processing ---
+      // Send crop + interval params but no video file (already assembled server-side)
+      const processForm = new FormData();
+      processForm.append("job_id", jobId);
+      processForm.append("sample_interval", formData.get("sample_interval") || "1.5");
+      processForm.append("crop_left", formData.get("crop_left") || "0");
+      processForm.append("crop_top", formData.get("crop_top") || "0");
+      processForm.append("crop_width", formData.get("crop_width") || "100");
+      processForm.append("crop_height", formData.get("crop_height") || "100");
+
+      const processResponse = await fetch("/api/process", {
+        method: "POST",
+        body: processForm,
+      });
+
+      const payload = await processResponse.json().catch(() => ({}));
+
+      if (!processResponse.ok) {
+        throw new Error(payload.error || "Route generation failed.");
+      }
+
+      setProgress(processFill, processText, 100);
+      return payload;
     }
 
     function startProgressPolling(jobId) {
@@ -1379,7 +1388,6 @@
         clearInterval(progressTimer);
         progressTimer = null;
       }
-      stopUploadFallbackProgress();
     }
 
     function cancelActiveJob() {
