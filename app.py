@@ -16,6 +16,7 @@ from werkzeug.security import check_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 TESSDATA_DIR = BASE_DIR / "Tesseract Data"
+UPLOAD_TMP_DIR = Path(os.environ.get("UPLOAD_TMP_DIR", tempfile.gettempdir()))
 
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 MAX_CONTENT_LENGTH = int(os.environ.get("MAX_UPLOAD_BYTES", 1_000_000_000))
@@ -58,6 +59,7 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "false").lower() == "true"
+UPLOAD_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
@@ -524,7 +526,7 @@ def upload_chunk():
     with CHUNK_UPLOADS_LOCK:
         if job_id not in CHUNK_UPLOADS:
             # First chunk — create the temp file
-            temp_fd, temp_path = tempfile.mkstemp(suffix=suffix)
+            temp_fd, temp_path = tempfile.mkstemp(suffix=suffix, dir=UPLOAD_TMP_DIR)
             os.close(temp_fd)
             CHUNK_UPLOADS[job_id] = {
                 "temp_path": temp_path,
@@ -750,7 +752,7 @@ def process_video():
 
     try:
         suffix = Path(upload.filename).suffix.lower()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=UPLOAD_TMP_DIR) as temp_file:
             temp_path = temp_file.name
             upload.save(temp_file)
 
