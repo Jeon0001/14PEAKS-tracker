@@ -1,6 +1,6 @@
 # 14PEAKS Route Visualizer
 
-Upload a 1080p (1920x1080) route video, OCR the HUD coordinates, and render the extracted route as an interactive Three.js path.
+Upload a 16:9 1080p (1920x1080) or 720p (1280x720) route video, OCR the HUD coordinates, and render the extracted route as an interactive Three.js path.
 
 ## Local Run
 
@@ -34,7 +34,7 @@ Railway can deploy this app directly from GitHub. This repo includes a `Dockerfi
 
 ### Environment Variables
 
-The app accepts only `1080p (1920x1080)` videos. Optional Railway variables:
+The app accepts only `1080p (1920x1080)` or `720p (1280x720)` videos. Optional Railway variables:
 
 ```text
 MAX_UPLOAD_BYTES=1200000000

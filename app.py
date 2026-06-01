@@ -25,9 +25,11 @@ MAX_CONTENT_LENGTH = int(os.environ.get("MAX_UPLOAD_BYTES", 1_000_000_000))
 # 1–2 concurrent 1 GB uploads before memory pressure becomes a concern.  Scale to
 # multiple replicas (or increase Railway memory limits) for production workloads with
 # many simultaneous users.
-EXPECTED_WIDTH = 1920
-EXPECTED_HEIGHT = 1080
-EXPECTED_RESOLUTION_LABEL = "1080p (1920x1080)"
+SUPPORTED_RESOLUTIONS = (
+    (1920, 1080),
+    (1280, 720),
+)
+SUPPORTED_RESOLUTION_LABEL = "1080p (1920x1080) or 720p (1280x720)"
 ACCESS_PASSWORD_HASH = os.environ.get(
     "ACCESS_PASSWORD_HASH",
     "scrypt:32768:8:1$Th5CJULbcz4l1cLD$95464b5d94fbfaf853bf870a222012fe24349ddc736c8cbde6e0d0c2e9eab1a0a8f4ebdcc7236b5d56dd28a82267c1b2cbe4c411e40ae85db395c17c8682b595",
@@ -328,6 +330,17 @@ def request_crop(video_width, video_height):
     return crop
 
 
+def supported_resolution(video_width, video_height):
+    return (video_width, video_height) in SUPPORTED_RESOLUTIONS
+
+
+def unsupported_resolution_message(video_width, video_height):
+    return (
+        f"Only {SUPPORTED_RESOLUTION_LABEL} videos are accepted. "
+        f"This file is {video_width}x{video_height}."
+    )
+
+
 def extract_route(video_path, sample_interval_seconds, crop, progress_callback=None, cancel_callback=None):
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
@@ -339,11 +352,8 @@ def extract_route(video_path, sample_interval_seconds, crop, progress_callback=N
         fps = capture.get(cv2.CAP_PROP_FPS) or 30
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
-        if width != EXPECTED_WIDTH or height != EXPECTED_HEIGHT:
-            raise ValueError(
-                f"Only {EXPECTED_RESOLUTION_LABEL} videos are accepted. "
-                f"This file is {width}x{height}."
-            )
+        if not supported_resolution(width, height):
+            raise ValueError(unsupported_resolution_message(width, height))
 
         sample_every = max(1, round(fps * sample_interval_seconds))
         raw_points = []
@@ -468,9 +478,12 @@ def index():
     return render_template(
         "index.html",
         max_upload_mb=round(MAX_CONTENT_LENGTH / 1024 / 1024),
-        expected_width=EXPECTED_WIDTH,
-        expected_height=EXPECTED_HEIGHT,
-        default_crop=scaled_default_crop(EXPECTED_WIDTH, EXPECTED_HEIGHT),
+        supported_resolution_label=SUPPORTED_RESOLUTION_LABEL,
+        supported_resolutions=[
+            {"width": width, "height": height}
+            for width, height in SUPPORTED_RESOLUTIONS
+        ],
+        default_crop=scaled_default_crop(1920, 1080),
     )
 
 
@@ -577,11 +590,8 @@ def _run_processing(job_id, temp_path, sample_interval, crop_params):
         height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         capture.release()
 
-        if width != EXPECTED_WIDTH or height != EXPECTED_HEIGHT:
-            message = (
-                f"Only {EXPECTED_RESOLUTION_LABEL} videos are accepted. "
-                f"This file is {width}x{height}."
-            )
+        if not supported_resolution(width, height):
+            message = unsupported_resolution_message(width, height)
             update_job(job_id, stage="error", percent=0, message=message, done=True, error=True)
             return
 
@@ -761,11 +771,8 @@ def process_video():
         height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         capture.release()
 
-        if width != EXPECTED_WIDTH or height != EXPECTED_HEIGHT:
-            message = (
-                f"Only {EXPECTED_RESOLUTION_LABEL} videos are accepted. "
-                f"This file is {width}x{height}."
-            )
+        if not supported_resolution(width, height):
+            message = unsupported_resolution_message(width, height)
             update_job(job_id, stage="error", percent=0, message=message, done=True, error=True)
             return jsonify(
                 {
