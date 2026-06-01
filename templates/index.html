@@ -879,6 +879,7 @@
     const downloadRoute = document.getElementById("download-route");
     const restartFlow = document.getElementById("restart-flow");
     const errorBackdrop = document.getElementById("error-backdrop");
+    const errorTitle = document.getElementById("error-title");
     const errorMessage = document.getElementById("error-message");
     const closeError = document.getElementById("close-error");
     const progress = document.getElementById("progress");
@@ -1135,6 +1136,12 @@
 
       try {
         await waitForEvent(cropVideo, "loadedmetadata");
+        if (belowRecommendedResolution(cropVideo.videoWidth, cropVideo.videoHeight)) {
+          showWarning(
+            `This video is ${cropVideo.videoWidth}x${cropVideo.videoHeight}. Results may be bad with videos below 1080p, and 1080p is highly recommended.`
+          );
+        }
+
         const targetTime = Math.min(30, Math.max(0, cropVideo.duration - 0.1));
         cropVideo.currentTime = Number.isFinite(targetTime) ? targetTime : 0;
         await waitForEvent(cropVideo, "seeked");
@@ -1149,6 +1156,10 @@
 
     function isMp4File(file) {
       return Boolean(file && file.name.toLowerCase().endsWith(".mp4"));
+    }
+
+    function belowRecommendedResolution(width, height) {
+      return width < 1920 || height < 1080;
     }
 
     function resetSelectedVideo() {
@@ -1287,7 +1298,14 @@
     }
 
     function showError(message) {
+      errorTitle.textContent = "Something Went Wrong";
       errorMessage.textContent = message || "An unexpected error occurred.";
+      errorBackdrop.classList.add("visible");
+    }
+
+    function showWarning(message) {
+      errorTitle.textContent = "Quality Warning";
+      errorMessage.textContent = message;
       errorBackdrop.classList.add("visible");
     }
 
