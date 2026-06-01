@@ -429,6 +429,44 @@
       line-height: 1.4;
     }
 
+    .crop-tools {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+      flex-wrap: wrap;
+    }
+
+    .crop-tools button {
+      width: auto;
+      min-width: 132px;
+      margin-top: 0;
+      padding: 0 14px;
+    }
+
+    .ocr-result,
+    .estimate-panel {
+      border: 1px solid #333739;
+      border-radius: 6px;
+      padding: 10px;
+      background: rgba(16, 17, 18, 0.76);
+      color: #c7c1b6;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .ocr-result strong,
+    .estimate-panel strong {
+      color: #f5f1e8;
+    }
+
+    .ocr-result.good {
+      border-color: rgba(34, 197, 94, 0.72);
+    }
+
+    .ocr-result.bad {
+      border-color: rgba(249, 115, 22, 0.8);
+    }
+
     .crop-example {
       border: 1px solid #333739;
       border-radius: 6px;
@@ -611,6 +649,46 @@
       padding: 0 16px;
     }
 
+    .replay-controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 10px;
+      border: 1px solid #333739;
+      border-radius: 6px;
+      background: #111314;
+    }
+
+    .replay-controls button {
+      width: auto;
+      min-width: 90px;
+      margin-top: 0;
+      padding: 0 14px;
+    }
+
+    .replay-controls label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: auto;
+      margin: 0;
+      color: #d8d2c8;
+      white-space: nowrap;
+    }
+
+    .replay-controls input[type="range"] {
+      width: min(260px, 38vw);
+      padding: 0;
+    }
+
+    #replay-time {
+      min-width: 92px;
+      color: #9fa5a8;
+      font-size: 13px;
+      text-align: right;
+    }
+
     #empty {
       position: absolute;
       inset: 0;
@@ -763,6 +841,7 @@
             <p>Select how often to sample the video, then drag around the altitude and X/Z coordinate text. Recommended: 1.5 seconds.</p>
             <label for="sample_interval">Sample interval, seconds</label>
             <input id="sample_interval" name="sample_interval" type="number" min="0.1" max="5" step="0.1" value="1.5">
+            <div id="processing-estimate" class="estimate-panel">Choose a video to estimate processing time.</div>
           </div>
 
           <div>
@@ -774,6 +853,10 @@
                   <div id="crop-box"></div>
                 </div>
                 <div id="crop-meta" class="crop-meta">Choose a video, then drag over the altitude and X/Z coordinate text.</div>
+                <div class="crop-tools">
+                  <button id="test-ocr" class="secondary-button" type="button">Test OCR</button>
+                  <div id="ocr-result" class="ocr-result">Crop a HUD frame, then test OCR before processing.</div>
+                </div>
               </div>
               <div class="crop-example" aria-label="Ideal crop example">
                 <span>Ideal crop example</span>
@@ -835,6 +918,17 @@
           </div>
         </div>
         <div id="stats" class="stats" hidden></div>
+        <div id="replay-controls" class="replay-controls" hidden>
+          <button id="replay-toggle" type="button">Play</button>
+          <button id="replay-reset" class="secondary-button" type="button">Reset</button>
+          <label for="replay-progress">Replay
+            <input id="replay-progress" type="range" min="0" max="1000" value="0">
+          </label>
+          <label for="replay-speed">Speed
+            <input id="replay-speed" type="range" min="0.5" max="6" step="0.5" value="2">
+          </label>
+          <span id="replay-time">0:00</span>
+        </div>
         <div id="viewer">
           <div id="empty">Generated routes appear here.</div>
           <div id="tooltip"></div>
@@ -865,6 +959,9 @@
     const cropCanvas = document.getElementById("crop-canvas");
     const cropBox = document.getElementById("crop-box");
     const cropMeta = document.getElementById("crop-meta");
+    const testOcr = document.getElementById("test-ocr");
+    const ocrResult = document.getElementById("ocr-result");
+    const processingEstimate = document.getElementById("processing-estimate");
     const cropInputs = {
       left: document.getElementById("crop_left"),
       top: document.getElementById("crop_top"),
@@ -890,6 +987,12 @@
     const status = document.getElementById("status");
     const stats = document.getElementById("stats");
     const routeOutput = document.getElementById("route-output");
+    const replayControls = document.getElementById("replay-controls");
+    const replayToggle = document.getElementById("replay-toggle");
+    const replayReset = document.getElementById("replay-reset");
+    const replayProgress = document.getElementById("replay-progress");
+    const replaySpeed = document.getElementById("replay-speed");
+    const replayTime = document.getElementById("replay-time");
     const viewer = document.getElementById("viewer");
     const empty = document.getElementById("empty");
     const tooltip = document.getElementById("tooltip");
@@ -911,6 +1014,13 @@
     let latestStats = null;
     let activeJobId = null;
     let jobFinished = true;
+    let replayLine;
+    let replayMarker;
+    let replayPoints = [];
+    let replayLastTime = 0;
+    let replayElapsed = 0;
+    let replayPlaying = false;
+    let replayDuration = 1;
 
     videoInput.addEventListener("change", () => {
       const file = videoInput.files[0];
@@ -962,6 +1072,7 @@
     });
     restartFlow.addEventListener("click", () => {
       routeOutput.classList.remove("visible");
+      replayControls.hidden = true;
       stats.hidden = true;
       empty.style.display = "grid";
       latestRoute = [];
@@ -1009,6 +1120,16 @@
 
     cropStage.addEventListener("pointerup", finishCropDrag);
     cropStage.addEventListener("pointercancel", finishCropDrag);
+    testOcr.addEventListener("click", testSelectedCropOcr);
+    document.getElementById("sample_interval").addEventListener("input", updateProcessingEstimate);
+    replayToggle.addEventListener("click", toggleReplay);
+    replayReset.addEventListener("click", resetReplay);
+    replayProgress.addEventListener("input", () => {
+      replayPlaying = false;
+      replayToggle.textContent = "Play";
+      replayElapsed = (Number(replayProgress.value) / 1000) * replayDuration;
+      updateReplayFrame();
+    });
 
     function showStep(step) {
       currentStep = step;
@@ -1117,6 +1238,8 @@
       selectedCrop = null;
       cropBox.style.display = "none";
       cropMeta.textContent = "Loading preview frame...";
+      resetOcrResult();
+      updateProcessingEstimate();
 
       if (cropVideoUrl) {
         URL.revokeObjectURL(cropVideoUrl);
@@ -1148,8 +1271,10 @@
         drawCropFrame();
         cropFrameReady = true;
         cropMeta.textContent = "Drag a box around the altitude and X/Z coordinate text.";
+        updateProcessingEstimate();
       } catch (_error) {
         cropMeta.textContent = "Could not load a preview frame.";
+        updateProcessingEstimate();
         showError("Could not load a preview frame from this video.");
       }
     }
@@ -1169,6 +1294,8 @@
       cropDragStart = null;
       selectedCrop = null;
       cropBox.style.display = "none";
+      resetOcrResult();
+      updateProcessingEstimate();
     }
 
     function waitForEvent(target, eventName) {
@@ -1241,6 +1368,119 @@
       cropInputs.width.value = crop.width;
       cropInputs.height.value = crop.height;
       cropMeta.textContent = `OCR crop: ${cropInputs.left.value}, ${cropInputs.top.value}, ${cropInputs.width.value} x ${cropInputs.height.value}`;
+      resetOcrResult();
+    }
+
+    function resetOcrResult() {
+      ocrResult.classList.remove("good", "bad");
+      ocrResult.textContent = "Crop a HUD frame, then test OCR before processing.";
+    }
+
+    async function testSelectedCropOcr() {
+      if (!selectedCrop || !cropFrameReady) {
+        showError("Drag a crop box around the HUD text before testing OCR.");
+        return;
+      }
+
+      testOcr.disabled = true;
+      ocrResult.classList.remove("good", "bad");
+      ocrResult.textContent = "Testing OCR on this frame...";
+
+      try {
+        const blob = await croppedHudBlob();
+        const formData = new FormData();
+        formData.append("image", blob, "hud-crop.png");
+
+        const response = await fetch("/api/test-ocr", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(data.error || "OCR test failed.");
+        }
+
+        ocrResult.classList.toggle("good", data.success);
+        ocrResult.classList.toggle("bad", !data.success);
+
+        const altitude = data.altitude ?? "not found";
+        const x = data.x ?? "not found";
+        const z = data.z ?? "not found";
+        ocrResult.innerHTML = `
+          <strong>${data.success ? "OCR looks good" : "OCR needs adjustment"}</strong><br>
+          Altitude: ${altitude} | X: ${x} | Z: ${z}
+        `;
+      } catch (error) {
+        ocrResult.classList.add("bad");
+        ocrResult.textContent = error.message;
+      } finally {
+        testOcr.disabled = false;
+      }
+    }
+
+    function croppedHudBlob() {
+      const cropCanvasOut = document.createElement("canvas");
+      cropCanvasOut.width = selectedCrop.width;
+      cropCanvasOut.height = selectedCrop.height;
+      const context = cropCanvasOut.getContext("2d");
+      context.drawImage(
+        cropCanvas,
+        selectedCrop.left,
+        selectedCrop.top,
+        selectedCrop.width,
+        selectedCrop.height,
+        0,
+        0,
+        selectedCrop.width,
+        selectedCrop.height
+      );
+
+      return new Promise((resolve, reject) => {
+        cropCanvasOut.toBlob((blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error("Could not prepare the crop for OCR testing."));
+          }
+        }, "image/png");
+      });
+    }
+
+    function updateProcessingEstimate() {
+      const file = videoInput.files[0];
+      const sampleIntervalInput = document.getElementById("sample_interval");
+      const sampleInterval = Math.max(0.1, Number(sampleIntervalInput.value || 1.5));
+
+      if (!file || !cropVideo || !Number.isFinite(cropVideo.duration)) {
+        processingEstimate.textContent = "Choose a video to estimate processing time.";
+        return;
+      }
+
+      const sampledFrames = Math.max(1, Math.ceil(cropVideo.duration / sampleInterval));
+      const lowSeconds = sampledFrames * 0.045;
+      const highSeconds = sampledFrames * 0.13;
+      processingEstimate.innerHTML = `
+        <strong>Estimate:</strong> ${formatEstimateRange(lowSeconds, highSeconds)}
+        for about ${sampledFrames.toLocaleString()} OCR samples.
+      `;
+    }
+
+    function formatEstimateRange(lowSeconds, highSeconds) {
+      const low = formatEstimateDuration(lowSeconds);
+      const high = formatEstimateDuration(highSeconds);
+      return low === high ? low : `${low}-${high}`;
+    }
+
+    function formatEstimateDuration(seconds) {
+      const rounded = Math.max(1, Math.round(seconds));
+
+      if (rounded < 60) {
+        return `${rounded}s`;
+      }
+
+      const minutes = Math.round(rounded / 60);
+      return `${minutes} min`;
     }
 
     function redrawSelectedCrop() {
@@ -1823,6 +2063,7 @@
     function resetViewer() {
       if (animationId) {
         cancelAnimationFrame(animationId);
+        animationId = null;
       }
 
       if (renderer) {
@@ -1832,6 +2073,15 @@
 
       tooltip.style.display = "none";
       pointMeshes = [];
+      replayLine = null;
+      replayMarker = null;
+      replayPoints = [];
+      replayPlaying = false;
+      replayElapsed = 0;
+      replayDuration = 1;
+      replayProgress.value = "0";
+      replayToggle.textContent = "Play";
+      replayTime.textContent = "0:00";
     }
 
     function renderRoute(route) {
@@ -1879,9 +2129,11 @@
 
       const line = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints(points),
-        new THREE.LineBasicMaterial({ color: 0xf97316 })
+        new THREE.LineBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.28 })
       );
       scene.add(line);
+
+      setupReplay(points);
 
       const pointGeo = new THREE.SphereGeometry(3, 10, 10);
       const pointMat = new THREE.MeshBasicMaterial({ color: 0xf97316 });
@@ -1905,6 +2157,75 @@
       controls.update();
 
       animate();
+    }
+
+    function setupReplay(points) {
+      replayPoints = points;
+      replayDuration = Math.max(4, Math.min(36, points.length / 18));
+      replayElapsed = 0;
+      replayPlaying = false;
+      replayProgress.value = "0";
+      replayToggle.textContent = "Play";
+      replayTime.textContent = "0:00";
+      replayControls.hidden = false;
+
+      replayLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([points[0], points[0]]),
+        new THREE.LineBasicMaterial({ color: 0xf97316 })
+      );
+      scene.add(replayLine);
+
+      replayMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(9, 18, 18),
+        new THREE.MeshBasicMaterial({ color: 0x60a5fa })
+      );
+      replayMarker.position.copy(points[0]);
+      scene.add(replayMarker);
+      updateReplayFrame();
+    }
+
+    function toggleReplay() {
+      if (!replayPoints.length) {
+        return;
+      }
+
+      if (replayElapsed >= replayDuration) {
+        replayElapsed = 0;
+      }
+
+      replayPlaying = !replayPlaying;
+      replayToggle.textContent = replayPlaying ? "Pause" : "Play";
+      replayLastTime = performance.now();
+    }
+
+    function resetReplay() {
+      replayPlaying = false;
+      replayElapsed = 0;
+      replayToggle.textContent = "Play";
+      updateReplayFrame();
+    }
+
+    function updateReplayFrame() {
+      if (!replayPoints.length || !replayLine || !replayMarker) {
+        return;
+      }
+
+      const ratio = Math.max(0, Math.min(1, replayElapsed / replayDuration));
+      const exactIndex = ratio * (replayPoints.length - 1);
+      const index = Math.max(0, Math.min(replayPoints.length - 1, Math.floor(exactIndex)));
+      const nextIndex = Math.min(replayPoints.length - 1, index + 1);
+      const segmentRatio = exactIndex - index;
+      const markerPosition = replayPoints[index].clone().lerp(replayPoints[nextIndex], segmentRatio);
+      const visiblePoints = replayPoints.slice(0, index + 1);
+      visiblePoints.push(markerPosition);
+
+      replayLine.geometry.dispose();
+      replayLine.geometry = new THREE.BufferGeometry().setFromPoints(visiblePoints);
+      replayMarker.position.copy(markerPosition);
+      replayProgress.value = String(Math.round(ratio * 1000));
+
+      const routeSeconds = latestStats?.durationSeconds ? latestStats.durationSeconds * ratio : 0;
+      replayTime.textContent = formatDuration(routeSeconds);
     }
 
     function addRouteAxes(bounds) {
@@ -2054,6 +2375,22 @@
 
     function animate() {
       animationId = requestAnimationFrame(animate);
+
+      if (replayPlaying) {
+        const now = performance.now();
+        const speed = Math.max(0.5, Number(replaySpeed.value || 2));
+        replayElapsed += ((now - replayLastTime) / 1000) * speed;
+        replayLastTime = now;
+
+        if (replayElapsed >= replayDuration) {
+          replayElapsed = replayDuration;
+          replayPlaying = false;
+          replayToggle.textContent = "Play";
+        }
+
+        updateReplayFrame();
+      }
+
       controls.update();
       renderer.render(scene, camera);
     }

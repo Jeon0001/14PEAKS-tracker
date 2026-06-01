@@ -9,6 +9,7 @@ from functools import wraps
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pytesseract
 from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash
@@ -432,10 +433,9 @@ def extract_route(video_path, sample_interval_seconds, crop, progress_callback=N
             x2 = x1 + crop["width"]
             y2 = y1 + crop["height"]
             hud = frame[y1:y2, x1:x2]
-            text = pytesseract.image_to_string(hud, lang=COORD_MODEL, config=OCR_CONFIG)
-
-            y = parse_altitude(text)
-            coords = parse_coords(text)
+            ocr_result = read_hud_text(hud)
+            y = ocr_result["altitude"]
+            coords = ocr_result["coords"]
 
             if y is not None and coords is not None:
                 readable_frames += 1
@@ -484,6 +484,15 @@ def extract_route(video_path, sample_interval_seconds, crop, progress_callback=N
         }
     finally:
         capture.release()
+
+
+def read_hud_text(hud):
+    text = pytesseract.image_to_string(hud, lang=COORD_MODEL, config=OCR_CONFIG)
+    return {
+        "text": text.strip(),
+        "altitude": parse_altitude(text),
+        "coords": parse_coords(text),
+    }
 
 
 def allowed_video(filename):
@@ -626,6 +635,39 @@ def upload_chunk():
     )
 
     return jsonify({"ok": True, "received": received, "total": total_chunks, "complete": received >= total_chunks})
+
+
+@app.post("/api/test-ocr")
+@require_auth
+def test_ocr():
+    image = request.files.get("image")
+
+    if image is None:
+        return jsonify({"error": "Send a cropped HUD image first."}), 400
+
+    image_bytes = np.frombuffer(image.read(), dtype=np.uint8)
+    hud = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+
+    if hud is None or hud.size == 0:
+        return jsonify({"error": "Could not read the cropped HUD image."}), 400
+
+    try:
+        result = read_hud_text(hud)
+    except pytesseract.TesseractNotFoundError:
+        return jsonify({"error": "Tesseract OCR is not installed or is not in PATH."}), 500
+    except pytesseract.TesseractError as error:
+        return jsonify({"error": f"Tesseract OCR failed: {error}"}), 500
+
+    coords = result["coords"]
+    return jsonify(
+        {
+            "text": result["text"],
+            "altitude": result["altitude"],
+            "x": coords[0] if coords else None,
+            "z": coords[1] if coords else None,
+            "success": result["altitude"] is not None and coords is not None,
+        }
+    )
 
 
 def _run_processing(job_id, temp_path, sample_interval, crop_params):
