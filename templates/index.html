@@ -715,7 +715,7 @@
         <div class="wizard-header">
           <div>
             <h1>14PEAKS Route Visualizer</h1>
-            <p>Upload a {{ supported_resolution_label }} video and generate an interactive 3D route from the HUD coordinates.</p>
+            <p>Upload an MP4 route video and generate an interactive 3D route from the HUD coordinates. {{ recommended_resolution_label }} is recommended.</p>
           </div>
           <div class="steps" aria-label="Route generation steps">
             <span class="step-pill active" data-step-pill="0">Intro</span>
@@ -728,7 +728,7 @@
           <div>
             <div class="flow-kicker">14PEAKS route analysis</div>
             <h1 class="intro-title">14Peaks Route Visualizer</h1>
-            <p class="intro-copy">Turn a 1080p or 720p route video into an interactive 3D path using the altitude and coordinate HUD.</p>
+            <p class="intro-copy">Turn an MP4 route video into an interactive 3D path using the altitude and coordinate HUD. 1080p is recommended.</p>
             <p class="intro-credits">Main developers: <strong>.jeon</strong> and <strong>ylcxz</strong></p>
           </div>
           <div class="step-actions">
@@ -740,15 +740,15 @@
           <div class="step-content">
             <div class="flow-kicker">Step 1</div>
             <h1>Upload Video</h1>
-            <p>Choose a {{ supported_resolution_label }} route video.</p>
+            <p>Choose an MP4 route video. {{ recommended_resolution_label }} is recommended.</p>
             <label id="drop-zone" class="drop-zone" for="video">
               <span>
                 <strong>Drop Your Route Video Here</strong>
-                <span>or click to choose a 1080p or 720p video file</span>
+                <span>or click to choose an MP4 file. 1080p is recommended</span>
                 <span id="drop-zone-file" class="drop-zone-file">No file selected</span>
               </span>
             </label>
-            <input id="video" class="visually-hidden" name="video" type="file" accept="video/*" required>
+            <input id="video" class="visually-hidden" name="video" type="file" accept="video/mp4,.mp4" required>
           </div>
           <div class="step-actions">
             <button class="secondary-button" type="button" data-back>Back</button>
@@ -855,8 +855,6 @@
     import * as THREE from "https://esm.sh/three@0.159.0";
     import { OrbitControls } from "https://esm.sh/three@0.159.0/examples/jsm/controls/OrbitControls.js";
 
-    const SUPPORTED_RESOLUTIONS = {{ supported_resolutions | tojson }};
-    const SUPPORTED_RESOLUTION_LABEL = {{ supported_resolution_label | tojson }};
     const appShell = document.querySelector(".app-shell");
     const form = document.getElementById("upload-form");
     const videoInput = document.getElementById("video");
@@ -932,10 +930,10 @@
       });
     });
     dropZone.addEventListener("drop", (event) => {
-      const file = [...event.dataTransfer.files].find((item) => item.type.startsWith("video/"));
+      const file = [...event.dataTransfer.files].find(isMp4File);
 
       if (!file) {
-        showError("Drop a video file to continue.");
+        showError("Drop an MP4 video file to continue.");
         return;
       }
 
@@ -1046,10 +1044,15 @@
     }
 
     function validateFileSize(file) {
+      if (file && !isMp4File(file)) {
+        showError("Choose an MP4 video file to continue.");
+        resetSelectedVideo();
+        return false;
+      }
+
       if (file && file.size > MAX_UPLOAD_BYTES) {
         showError("File is too large. Maximum size is 1GB.");
-        videoInput.value = "";
-        dropZoneFile.textContent = "No file selected";
+        resetSelectedVideo();
         return false;
       }
       return true;
@@ -1132,13 +1135,6 @@
 
       try {
         await waitForEvent(cropVideo, "loadedmetadata");
-        if (!isSupportedResolution(cropVideo.videoWidth, cropVideo.videoHeight)) {
-          resetSelectedVideo();
-          cropMeta.textContent = `Choose a ${SUPPORTED_RESOLUTION_LABEL} video.`;
-          showError(`Only ${SUPPORTED_RESOLUTION_LABEL} videos are accepted. This file is ${cropVideo.videoWidth}x${cropVideo.videoHeight}.`);
-          return;
-        }
-
         const targetTime = Math.min(30, Math.max(0, cropVideo.duration - 0.1));
         cropVideo.currentTime = Number.isFinite(targetTime) ? targetTime : 0;
         await waitForEvent(cropVideo, "seeked");
@@ -1151,10 +1147,8 @@
       }
     }
 
-    function isSupportedResolution(width, height) {
-      return SUPPORTED_RESOLUTIONS.some((resolution) => (
-        resolution.width === width && resolution.height === height
-      ));
+    function isMp4File(file) {
+      return Boolean(file && file.name.toLowerCase().endsWith(".mp4"));
     }
 
     function resetSelectedVideo() {
