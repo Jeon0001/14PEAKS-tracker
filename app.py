@@ -21,7 +21,6 @@ UPLOAD_TMP_DIR = Path(os.environ.get("UPLOAD_TMP_DIR", tempfile.gettempdir()))
 ALLOWED_EXTENSIONS = {".mp4"}
 MAX_CONTENT_LENGTH = int(os.environ.get("MAX_UPLOAD_BYTES", 1_000_000_000))
 TEMP_UPLOAD_PREFIX = "14peaks-upload-"
-LEGACY_TEMP_UPLOAD_PREFIX = "tmp"
 UPLOAD_TMP_DIR_CONFIGURED = "UPLOAD_TMP_DIR" in os.environ
 STALE_UPLOAD_FILE_SECONDS = int(os.environ.get("STALE_UPLOAD_FILE_SECONDS", 3 * 60 * 60))
 UPLOAD_CLEANUP_INTERVAL_SECONDS = int(os.environ.get("UPLOAD_CLEANUP_INTERVAL_SECONDS", 30 * 60))
@@ -73,6 +72,8 @@ CHUNK_UPLOADS = {}
 CHUNK_UPLOADS_LOCK = threading.Lock()
 CHUNK_UPLOAD_TTL_SECONDS = 30 * 60
 CHUNK_SIZE = 10 * 1024 * 1024
+ACTIVE_PROCESSING_PATHS = set()
+ACTIVE_PROCESSING_PATHS_LOCK = threading.Lock()
 
 
 def prune_jobs():
@@ -99,6 +100,7 @@ def delete_file(path):
 
 def cleanup_stale_upload_files(max_age_seconds=STALE_UPLOAD_FILE_SECONDS):
     cutoff = time.time() - max_age_seconds
+    active_paths = protected_upload_paths()
 
     for path in UPLOAD_TMP_DIR.iterdir():
         try:
@@ -109,6 +111,7 @@ def cleanup_stale_upload_files(max_age_seconds=STALE_UPLOAD_FILE_SECONDS):
         if (
             path.is_file()
             and managed_temp_upload_file(path)
+            and str(path) not in active_paths
             and path.suffix.lower() in ALLOWED_EXTENSIONS
             and stat.st_mtime < cutoff
         ):
@@ -116,10 +119,21 @@ def cleanup_stale_upload_files(max_age_seconds=STALE_UPLOAD_FILE_SECONDS):
 
 
 def managed_temp_upload_file(path):
-    if path.name.startswith(TEMP_UPLOAD_PREFIX):
-        return True
+    return path.name.startswith(TEMP_UPLOAD_PREFIX)
 
-    return UPLOAD_TMP_DIR_CONFIGURED and path.name.startswith(LEGACY_TEMP_UPLOAD_PREFIX)
+
+def protected_upload_paths():
+    with CHUNK_UPLOADS_LOCK:
+        chunk_paths = {
+            upload_state.get("temp_path")
+            for upload_state in CHUNK_UPLOADS.values()
+            if upload_state.get("temp_path")
+        }
+
+    with ACTIVE_PROCESSING_PATHS_LOCK:
+        processing_paths = set(ACTIVE_PROCESSING_PATHS)
+
+    return chunk_paths | processing_paths
 
 
 def start_upload_cleanup_thread():
@@ -616,6 +630,9 @@ def upload_chunk():
 
 def _run_processing(job_id, temp_path, sample_interval, crop_params):
     """Background thread: validate video dimensions, extract route, update job state."""
+    with ACTIVE_PROCESSING_PATHS_LOCK:
+        ACTIVE_PROCESSING_PATHS.add(temp_path)
+
     try:
         capture = cv2.VideoCapture(temp_path)
         width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -679,6 +696,8 @@ def _run_processing(job_id, temp_path, sample_interval, crop_params):
     except pytesseract.TesseractError as error:
         update_job(job_id, stage="error", percent=0, message=f"Tesseract OCR failed: {error}", done=True, error=True)
     finally:
+        with ACTIVE_PROCESSING_PATHS_LOCK:
+            ACTIVE_PROCESSING_PATHS.discard(temp_path)
         delete_file(temp_path)
 
 
@@ -782,8 +801,8 @@ def process_video():
     upload.stream.seek(0, 2)
     file_size = upload.stream.tell()
     upload.stream.seek(0)
-    if file_size > 1_000_000_000:
-        message = "File is too large. Maximum size is 1GB."
+    if file_size > MAX_CONTENT_LENGTH:
+        message = f"File is too large. Maximum size is {round(MAX_CONTENT_LENGTH / 1024 / 1024)} MB."
         update_job(job_id, stage="error", percent=0, message=message, done=True, error=True)
         return jsonify({"error": message}), 413
 
@@ -802,6 +821,9 @@ def process_video():
         ) as temp_file:
             temp_path = temp_file.name
             upload.save(temp_file)
+
+        with ACTIVE_PROCESSING_PATHS_LOCK:
+            ACTIVE_PROCESSING_PATHS.add(temp_path)
 
         capture = cv2.VideoCapture(temp_path)
         width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -872,6 +894,8 @@ def process_video():
         update_job(job_id, stage="error", percent=0, message=f"Tesseract OCR failed: {error}", done=True, error=True)
         return jsonify({"error": f"Tesseract OCR failed: {error}"}), 500
     finally:
+        with ACTIVE_PROCESSING_PATHS_LOCK:
+            ACTIVE_PROCESSING_PATHS.discard(temp_path)
         delete_file(temp_path)
 
 
