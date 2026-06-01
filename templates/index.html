@@ -443,8 +443,7 @@
       padding: 0 14px;
     }
 
-    .ocr-result,
-    .estimate-panel {
+    .ocr-result {
       border: 1px solid #333739;
       border-radius: 6px;
       padding: 10px;
@@ -454,8 +453,7 @@
       line-height: 1.45;
     }
 
-    .ocr-result strong,
-    .estimate-panel strong {
+    .ocr-result strong {
       color: #f5f1e8;
     }
 
@@ -841,7 +839,6 @@
             <p>Select how often to sample the video, then drag around the altitude and X/Z coordinate text. Recommended: 1.5 seconds.</p>
             <label for="sample_interval">Sample interval, seconds</label>
             <input id="sample_interval" name="sample_interval" type="number" min="0.1" max="5" step="0.1" value="1.5">
-            <div id="processing-estimate" class="estimate-panel">Choose a video to estimate processing time.</div>
           </div>
 
           <div>
@@ -961,7 +958,6 @@
     const cropMeta = document.getElementById("crop-meta");
     const testOcr = document.getElementById("test-ocr");
     const ocrResult = document.getElementById("ocr-result");
-    const processingEstimate = document.getElementById("processing-estimate");
     const cropInputs = {
       left: document.getElementById("crop_left"),
       top: document.getElementById("crop_top"),
@@ -1121,7 +1117,6 @@
     cropStage.addEventListener("pointerup", finishCropDrag);
     cropStage.addEventListener("pointercancel", finishCropDrag);
     testOcr.addEventListener("click", testSelectedCropOcr);
-    document.getElementById("sample_interval").addEventListener("input", updateProcessingEstimate);
     replayToggle.addEventListener("click", toggleReplay);
     replayReset.addEventListener("click", resetReplay);
     replayProgress.addEventListener("input", () => {
@@ -1239,7 +1234,6 @@
       cropBox.style.display = "none";
       cropMeta.textContent = "Loading preview frame...";
       resetOcrResult();
-      updateProcessingEstimate();
 
       if (cropVideoUrl) {
         URL.revokeObjectURL(cropVideoUrl);
@@ -1271,10 +1265,8 @@
         drawCropFrame();
         cropFrameReady = true;
         cropMeta.textContent = "Drag a box around the altitude and X/Z coordinate text.";
-        updateProcessingEstimate();
       } catch (_error) {
         cropMeta.textContent = "Could not load a preview frame.";
-        updateProcessingEstimate();
         showError("Could not load a preview frame from this video.");
       }
     }
@@ -1295,7 +1287,6 @@
       selectedCrop = null;
       cropBox.style.display = "none";
       resetOcrResult();
-      updateProcessingEstimate();
     }
 
     function waitForEvent(target, eventName) {
@@ -1445,42 +1436,6 @@
           }
         }, "image/png");
       });
-    }
-
-    function updateProcessingEstimate() {
-      const file = videoInput.files[0];
-      const sampleIntervalInput = document.getElementById("sample_interval");
-      const sampleInterval = Math.max(0.1, Number(sampleIntervalInput.value || 1.5));
-
-      if (!file || !cropVideo || !Number.isFinite(cropVideo.duration)) {
-        processingEstimate.textContent = "Choose a video to estimate processing time.";
-        return;
-      }
-
-      const sampledFrames = Math.max(1, Math.ceil(cropVideo.duration / sampleInterval));
-      const lowSeconds = sampledFrames * 0.045;
-      const highSeconds = sampledFrames * 0.13;
-      processingEstimate.innerHTML = `
-        <strong>Estimate:</strong> ${formatEstimateRange(lowSeconds, highSeconds)}
-        for about ${sampledFrames.toLocaleString()} OCR samples.
-      `;
-    }
-
-    function formatEstimateRange(lowSeconds, highSeconds) {
-      const low = formatEstimateDuration(lowSeconds);
-      const high = formatEstimateDuration(highSeconds);
-      return low === high ? low : `${low}-${high}`;
-    }
-
-    function formatEstimateDuration(seconds) {
-      const rounded = Math.max(1, Math.round(seconds));
-
-      if (rounded < 60) {
-        return `${rounded}s`;
-      }
-
-      const minutes = Math.round(rounded / 60);
-      return `${minutes} min`;
     }
 
     function redrawSelectedCrop() {
