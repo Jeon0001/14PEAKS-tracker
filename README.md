@@ -42,6 +42,8 @@ COORD_MODEL=2Kor
 SECRET_KEY=replace-with-a-long-random-string
 SESSION_COOKIE_SECURE=true
 ACCESS_PASSWORD_HASH=optional-password-hash-override
+STALE_UPLOAD_FILE_SECONDS=10800
+UPLOAD_CLEANUP_INTERVAL_SECONDS=1800
 ```
 
 `MAX_UPLOAD_BYTES` controls max upload size. The default is about 750 MB.
@@ -54,7 +56,11 @@ ACCESS_PASSWORD_HASH=optional-password-hash-override
 
 `ACCESS_PASSWORD_HASH` can override the built-in beta password hash without storing a plaintext password in the repo.
 
-Uploaded videos are saved only to a temporary file while OCR runs. The temp file is deleted in a `finally` block after processing succeeds or fails. Generated route points are returned directly to the browser and are not persisted on the server.
+`STALE_UPLOAD_FILE_SECONDS` controls when app-created temporary upload files are considered stale. The default is 3 hours.
+
+`UPLOAD_CLEANUP_INTERVAL_SECONDS` controls how often the background cleanup thread scans for stale temporary uploads. The default is 30 minutes.
+
+Uploaded videos are saved only to a temporary file while OCR runs. The temp file is deleted in a `finally` block after processing succeeds or fails. A background cleanup thread also deletes app-created temporary uploads that are 3+ hours old. When `UPLOAD_TMP_DIR` is configured, it also cleans older legacy `tmp*.mp4` upload files from previous app versions. Generated route points are returned directly to the browser and are not persisted on the server.
 
 ### Notes
 

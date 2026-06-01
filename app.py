@@ -20,6 +20,11 @@ UPLOAD_TMP_DIR = Path(os.environ.get("UPLOAD_TMP_DIR", tempfile.gettempdir()))
 
 ALLOWED_EXTENSIONS = {".mp4"}
 MAX_CONTENT_LENGTH = int(os.environ.get("MAX_UPLOAD_BYTES", 1_000_000_000))
+TEMP_UPLOAD_PREFIX = "14peaks-upload-"
+LEGACY_TEMP_UPLOAD_PREFIX = "tmp"
+UPLOAD_TMP_DIR_CONFIGURED = "UPLOAD_TMP_DIR" in os.environ
+STALE_UPLOAD_FILE_SECONDS = int(os.environ.get("STALE_UPLOAD_FILE_SECONDS", 3 * 60 * 60))
+UPLOAD_CLEANUP_INTERVAL_SECONDS = int(os.environ.get("UPLOAD_CLEANUP_INTERVAL_SECONDS", 30 * 60))
 # Resource note: each upload streams ~1 GB into RAM while OpenCV reads the temp file,
 # plus disk space for the temp file itself.  A single replica can comfortably handle
 # 1–2 concurrent 1 GB uploads before memory pressure becomes a concern.  Scale to
@@ -85,8 +90,48 @@ def prune_jobs():
 
 
 def delete_file(path):
-    if path and os.path.exists(path):
-        os.remove(path)
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def cleanup_stale_upload_files(max_age_seconds=STALE_UPLOAD_FILE_SECONDS):
+    cutoff = time.time() - max_age_seconds
+
+    for path in UPLOAD_TMP_DIR.iterdir():
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+
+        if (
+            path.is_file()
+            and managed_temp_upload_file(path)
+            and path.suffix.lower() in ALLOWED_EXTENSIONS
+            and stat.st_mtime < cutoff
+        ):
+            delete_file(path)
+
+
+def managed_temp_upload_file(path):
+    if path.name.startswith(TEMP_UPLOAD_PREFIX):
+        return True
+
+    return UPLOAD_TMP_DIR_CONFIGURED and path.name.startswith(LEGACY_TEMP_UPLOAD_PREFIX)
+
+
+def start_upload_cleanup_thread():
+    cleanup_stale_upload_files()
+
+    def cleanup_loop():
+        while True:
+            time.sleep(UPLOAD_CLEANUP_INTERVAL_SECONDS)
+            cleanup_stale_upload_files()
+
+    thread = threading.Thread(target=cleanup_loop, daemon=True)
+    thread.start()
 
 
 def cleanup_chunk_upload(job_id):
@@ -431,6 +476,9 @@ def allowed_video(filename):
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
 
 
+start_upload_cleanup_thread()
+
+
 @app.get("/login")
 def login():
     if authenticated():
@@ -519,8 +567,11 @@ def upload_chunk():
 
     with CHUNK_UPLOADS_LOCK:
         if job_id not in CHUNK_UPLOADS:
-            # First chunk — create the temp file
-            temp_fd, temp_path = tempfile.mkstemp(suffix=suffix, dir=UPLOAD_TMP_DIR)
+            temp_fd, temp_path = tempfile.mkstemp(
+                prefix=TEMP_UPLOAD_PREFIX,
+                suffix=suffix,
+                dir=UPLOAD_TMP_DIR,
+            )
             os.close(temp_fd)
             CHUNK_UPLOADS[job_id] = {
                 "temp_path": temp_path,
@@ -743,7 +794,12 @@ def process_video():
 
     try:
         suffix = Path(upload.filename).suffix.lower()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=UPLOAD_TMP_DIR) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            prefix=TEMP_UPLOAD_PREFIX,
+            suffix=suffix,
+            dir=UPLOAD_TMP_DIR,
+        ) as temp_file:
             temp_path = temp_file.name
             upload.save(temp_file)
 
