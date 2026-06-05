@@ -249,6 +249,7 @@ COORD_MODEL = traineddata_model_name("COORD_MODEL", "2Kor")
 ALTITUDE_MODEL = traineddata_model_name("ALTITUDE_MODEL", "2Kalti", fallback=COORD_MODEL)
 configure_tesseract()
 COORD_OCR_CONFIG = "--psm 6"
+COORD_LINE_OCR_CONFIG = "--psm 13"
 ALTITUDE_OCR_CONFIG = "--psm 13"
 
 
@@ -486,15 +487,40 @@ def extract_route(video_path, sample_interval_seconds, crop, progress_callback=N
 
 
 def read_hud_text(hud):
-    coord_text = pytesseract.image_to_string(hud, lang=COORD_MODEL, config=COORD_OCR_CONFIG)
+    coord_texts = read_coord_text_candidates(hud)
     altitude_texts = read_altitude_text_candidates(hud)
-    altitude = first_parsed_altitude(altitude_texts + [coord_text])
+    altitude = first_parsed_altitude(altitude_texts + coord_texts)
+    coords = first_parsed_coords(coord_texts)
 
     return {
-        "text": "\n".join(text.strip() for text in [coord_text, *altitude_texts] if text.strip()),
+        "text": "\n".join(text.strip() for text in [*coord_texts, *altitude_texts] if text.strip()),
         "altitude": altitude,
-        "coords": parse_coords(coord_text),
+        "coords": coords,
     }
+
+
+def read_coord_text_candidates(hud):
+    height, width = hud.shape[:2]
+    candidates = []
+
+    # Coordinates usually sit at the bottom of the selected HUD crop. On 720p
+    # footage, extra altitude/direction text in the full crop can confuse 2Kor,
+    # so try coordinate-heavy slices before falling back to the full crop.
+    regions = (
+        hud[max(0, round(height * 0.55)) :, :],
+        hud[max(0, round(height * 0.48)) :, :],
+        hud[max(0, round(height * 0.40)) :, :],
+        hud,
+    )
+
+    for index, region in enumerate(regions):
+        if region.size == 0:
+            continue
+        config = COORD_LINE_OCR_CONFIG if index < len(regions) - 1 else COORD_OCR_CONFIG
+        text = pytesseract.image_to_string(region, lang=COORD_MODEL, config=config)
+        candidates.append(text)
+
+    return candidates
 
 
 def read_altitude_text_candidates(hud):
@@ -525,6 +551,15 @@ def first_parsed_altitude(texts):
         altitude = parse_altitude(text)
         if altitude is not None:
             return altitude
+
+    return None
+
+
+def first_parsed_coords(texts):
+    for text in texts:
+        coords = parse_coords(text)
+        if coords is not None:
+            return coords
 
     return None
 
