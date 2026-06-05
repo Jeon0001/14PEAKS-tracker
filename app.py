@@ -233,25 +233,23 @@ def configure_tesseract():
         os.environ["TESSDATA_PREFIX"] = str(TESSDATA_DIR)
 
 
-def tesseract_config():
-    return "--psm 6"
-
-
-def coord_model_name():
-    configured = os.environ.get("COORD_MODEL")
+def traineddata_model_name(env_name, preferred_name, fallback="eng"):
+    configured = os.environ.get(env_name)
     if configured:
         return configured
 
     for traineddata in TESSDATA_DIR.glob("*.traineddata"):
-        if traineddata.stem.lower() == "2kor":
+        if traineddata.stem.lower() == preferred_name.lower():
             return traineddata.stem
 
-    return "eng"
+    return fallback
 
 
-COORD_MODEL = coord_model_name()
+COORD_MODEL = traineddata_model_name("COORD_MODEL", "2Kor")
+ALTITUDE_MODEL = traineddata_model_name("ALTITUDE_MODEL", "2Kalti", fallback=COORD_MODEL)
 configure_tesseract()
-OCR_CONFIG = tesseract_config()
+COORD_OCR_CONFIG = "--psm 6"
+ALTITUDE_OCR_CONFIG = "--psm 13"
 
 
 def clean_number(value):
@@ -480,6 +478,7 @@ def extract_route(video_path, sample_interval_seconds, crop, progress_callback=N
                 "durationSeconds": round(duration, 2) if duration else None,
                 "crop": crop,
                 "coordModel": COORD_MODEL,
+                "altitudeModel": ALTITUDE_MODEL,
             },
         }
     finally:
@@ -487,12 +486,47 @@ def extract_route(video_path, sample_interval_seconds, crop, progress_callback=N
 
 
 def read_hud_text(hud):
-    text = pytesseract.image_to_string(hud, lang=COORD_MODEL, config=OCR_CONFIG)
+    coord_text = pytesseract.image_to_string(hud, lang=COORD_MODEL, config=COORD_OCR_CONFIG)
+    altitude_texts = read_altitude_text_candidates(hud)
+    altitude = first_parsed_altitude(altitude_texts + [coord_text])
+
     return {
-        "text": text.strip(),
-        "altitude": parse_altitude(text),
-        "coords": parse_coords(text),
+        "text": "\n".join(text.strip() for text in [coord_text, *altitude_texts] if text.strip()),
+        "altitude": altitude,
+        "coords": parse_coords(coord_text),
     }
+
+
+def read_altitude_text_candidates(hud):
+    height, width = hud.shape[:2]
+    candidates = []
+
+    # The user crop usually contains altitude near the top, direction in the
+    # middle, and X/Z coordinates near the bottom. Kalti works best as a single
+    # text-line recognizer, so try altitude-heavy slices instead of the full HUD.
+    regions = (
+        hud[: max(1, round(height * 0.55)), :],
+        hud[: max(1, round(height * 0.45)), :],
+        hud[max(0, round(height * 0.12)) : max(1, round(height * 0.58)), :],
+        hud,
+    )
+
+    for region in regions:
+        if region.size == 0:
+            continue
+        text = pytesseract.image_to_string(region, lang=ALTITUDE_MODEL, config=ALTITUDE_OCR_CONFIG)
+        candidates.append(text)
+
+    return candidates
+
+
+def first_parsed_altitude(texts):
+    for text in texts:
+        altitude = parse_altitude(text)
+        if altitude is not None:
+            return altitude
+
+    return None
 
 
 def allowed_video(filename):
