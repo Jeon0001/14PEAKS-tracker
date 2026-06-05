@@ -862,34 +862,7 @@ def process_video():
         )
         thread.start()
 
-        # Long-poll: wait for the background thread to finish (up to 10 min)
-        thread.join(timeout=600)
-
-        job = get_job(job_id)
-        if job is None or not job.get("done"):
-            update_job(
-                job_id,
-                cancelled=True,
-                stage="error",
-                percent=0,
-                message="Processing timed out.",
-                done=True,
-                error=True,
-            )
-            return jsonify({"error": "Processing timed out."}), 504
-
-        if job.get("error"):
-            return jsonify({"error": job.get("message", "Route generation failed.")}), 400
-
-        result = job.get("result")
-        if not result:
-            return jsonify({"error": "Route generation produced no result."}), 500
-
-        return app.response_class(
-            response=json.dumps(result),
-            status=200,
-            mimetype="application/json",
-        )
+        return jsonify({"ok": True, "job_id": job_id, "stage": "processing"}), 202
 
     # --- Legacy single-request path (kept for backwards compatibility) ---
     update_job(

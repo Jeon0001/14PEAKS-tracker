@@ -1581,8 +1581,46 @@
         throw new Error(payload.error || "Route generation failed.");
       }
 
+      if (processResponse.status === 202 || !payload.route) {
+        return await waitForProcessingResult(jobId);
+      }
+
       setProgress(processFill, processText, 100);
       return payload;
+    }
+
+    async function waitForProcessingResult(jobId) {
+      while (true) {
+        const response = await fetch(`/api/progress/${encodeURIComponent(jobId)}`);
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(data.error || `Progress check failed with HTTP ${response.status}.`);
+        }
+
+        if (data.stage === "processing" || data.stage === "done") {
+          setProgress(processFill, processText, data.percent);
+        }
+
+        if (data.message && data.stage !== "waiting") {
+          status.textContent = data.message;
+        }
+
+        if (data.done) {
+          if (data.error) {
+            throw new Error(data.message || "Route generation failed.");
+          }
+
+          if (!data.result) {
+            throw new Error("Route generation finished without returning route data.");
+          }
+
+          setProgress(processFill, processText, 100);
+          return data.result;
+        }
+
+        await sleep(1000);
+      }
     }
 
     async function uploadChunkWithRetries(chunkForm, chunkIndex, totalChunks) {
