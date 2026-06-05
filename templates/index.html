@@ -1520,7 +1520,9 @@
       text.textContent = `${safePercent}%`;
     }
 
-    const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB per chunk
+    const CHUNK_SIZE = {{ upload_chunk_size }};
+    const MAX_CHUNK_ATTEMPTS = 5;
+    const CHUNK_UPLOAD_TIMEOUT_MS = 90000;
 
     async function uploadAndProcess(formData) {
       const file = formData.get("video");
@@ -1544,21 +1546,7 @@
         chunkForm.append("filename", file.name);
         chunkForm.append("chunk", chunkBlob, file.name);
 
-        const response = await fetch("/api/upload-chunk", {
-          method: "POST",
-          body: chunkForm,
-        });
-
-        if (!response.ok) {
-          let errorMessage = "Chunk upload failed.";
-          try {
-            const data = await response.json();
-            errorMessage = data.error || errorMessage;
-          } catch (_parseError) {
-            // ignore
-          }
-          throw new Error(errorMessage);
-        }
+        await uploadChunkWithRetries(chunkForm, index, totalChunks);
 
         const uploadPercent = ((index + 1) / totalChunks) * 100;
         setProgress(uploadFill, uploadText, uploadPercent);
@@ -1595,6 +1583,70 @@
 
       setProgress(processFill, processText, 100);
       return payload;
+    }
+
+    async function uploadChunkWithRetries(chunkForm, chunkIndex, totalChunks) {
+      for (let attempt = 1; attempt <= MAX_CHUNK_ATTEMPTS; attempt++) {
+        try {
+          status.textContent = `Uploading chunk ${chunkIndex + 1} of ${totalChunks}${attempt > 1 ? ` (retry ${attempt}/${MAX_CHUNK_ATTEMPTS})` : ""}...`;
+          const response = await fetchWithTimeout("/api/upload-chunk", {
+            method: "POST",
+            body: chunkForm,
+          }, CHUNK_UPLOAD_TIMEOUT_MS);
+
+          if (response.ok) {
+            return;
+          }
+
+          const errorMessage = await readUploadError(response);
+          if (!shouldRetryChunkStatus(response.status) || attempt === MAX_CHUNK_ATTEMPTS) {
+            throw new Error(errorMessage);
+          }
+        } catch (error) {
+          if (attempt === MAX_CHUNK_ATTEMPTS || !shouldRetryChunkError(error)) {
+            throw new Error(`Chunk ${chunkIndex + 1} failed after ${attempt} attempt(s): ${error.message}`);
+          }
+        }
+
+        await sleep(1000 * attempt);
+      }
+    }
+
+    async function fetchWithTimeout(url, options, timeoutMs) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        return await fetch(url, {
+          ...options,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    async function readUploadError(response) {
+      let errorMessage = `Chunk upload failed with HTTP ${response.status}.`;
+      try {
+        const data = await response.json();
+        errorMessage = data.error || errorMessage;
+      } catch (_parseError) {
+        // ignore
+      }
+      return errorMessage;
+    }
+
+    function shouldRetryChunkStatus(statusCode) {
+      return statusCode === 408 || statusCode === 429 || statusCode >= 500;
+    }
+
+    function shouldRetryChunkError(error) {
+      return error.name === "AbortError" || error instanceof TypeError || /network|fetch|timeout|abort/i.test(error.message);
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
     function startProgressPolling(jobId) {

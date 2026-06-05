@@ -72,7 +72,7 @@ JOB_TTL_SECONDS = 15 * 60
 CHUNK_UPLOADS = {}
 CHUNK_UPLOADS_LOCK = threading.Lock()
 CHUNK_UPLOAD_TTL_SECONDS = 30 * 60
-CHUNK_SIZE = 10 * 1024 * 1024
+CHUNK_SIZE = int(os.environ.get("UPLOAD_CHUNK_SIZE_BYTES", 5 * 1024 * 1024))
 ACTIVE_PROCESSING_PATHS = set()
 ACTIVE_PROCESSING_PATHS_LOCK = threading.Lock()
 
@@ -603,6 +603,7 @@ def index():
     return render_template(
         "index.html",
         max_upload_mb=round(MAX_CONTENT_LENGTH / 1024 / 1024),
+        upload_chunk_size=CHUNK_SIZE,
         recommended_resolution_label=RECOMMENDED_RESOLUTION_LABEL,
         default_crop=scaled_default_crop(1920, 1080),
     )
