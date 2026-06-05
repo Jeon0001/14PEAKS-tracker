@@ -30,7 +30,7 @@ UPLOAD_CLEANUP_INTERVAL_SECONDS = int(os.environ.get("UPLOAD_CLEANUP_INTERVAL_SE
 # 1–2 concurrent 1 GB uploads before memory pressure becomes a concern.  Scale to
 # multiple replicas (or increase Railway memory limits) for production workloads with
 # many simultaneous users.
-RECOMMENDED_RESOLUTION_LABEL = "720p or 1080p"
+RECOMMENDED_RESOLUTION_LABEL = "1080p"
 ACCESS_PASSWORD_HASH = os.environ.get(
     "ACCESS_PASSWORD_HASH",
     "scrypt:32768:8:1$Th5CJULbcz4l1cLD$95464b5d94fbfaf853bf870a222012fe24349ddc736c8cbde6e0d0c2e9eab1a0a8f4ebdcc7236b5d56dd28a82267c1b2cbe4c411e40ae85db395c17c8682b595",
