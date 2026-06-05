@@ -6,3 +6,27 @@ venv/
 .codex_deps/
 uploads/
 *.log
+
+# Local OCR training data and tooling.
+2Kor-ground-truth/
+2Kalti-ground-truth/
+2Kor-ground-truth-720p/
+2Kalti-ground-truth-720p/
+ocr-training/
+training/
+local-training/
+tools/convert_ocr_training_to_720p.py
+convert_ocr_training_to_720p.py
+train_ocr*.py
+Backup_Data/
+
+# Generated Tesseract training artifacts.
+*.traineddata
+*.lstmf
+*.box
+*.unicharset
+*.normproto
+*.pffmtable
+*.shapetable
+*.inttemp
+*.dawg
