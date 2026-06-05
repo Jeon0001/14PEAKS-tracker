@@ -804,7 +804,7 @@
           <div>
             <div class="flow-kicker">14PEAKS route analysis</div>
             <h1 class="intro-title">14Peaks Route Visualizer</h1>
-            <p class="intro-copy">Turn an MP4 route video into an interactive 3D path using the altitude and coordinate HUD. 1080p is recommended.</p>
+            <p class="intro-copy">Turn an MP4 route video into an interactive 3D path using the altitude and coordinate HUD. 720p and 1080p videos are supported and recommended over other resolutions.</p>
             <p class="intro-credits">Main developers: <strong>.jeon</strong> and <strong>ylcxz</strong></p>
           </div>
           <div class="step-actions">
@@ -816,11 +816,11 @@
           <div class="step-content">
             <div class="flow-kicker">Step 1</div>
             <h1>Upload Video</h1>
-            <p>Choose an MP4 route video. {{ recommended_resolution_label }} is recommended.</p>
+            <p>Choose an MP4 route video. 720p and 1080p are supported and recommended over other resolutions.</p>
             <label id="drop-zone" class="drop-zone" for="video">
               <span>
                 <strong>Drop Your Route Video Here</strong>
-                <span>or click to choose an MP4 file. 1080p is recommended</span>
+                <span>or click to choose an MP4 file. 720p or 1080p is recommended</span>
                 <span id="drop-zone-file" class="drop-zone-file">No file selected</span>
               </span>
             </label>
@@ -1253,9 +1253,9 @@
 
       try {
         await waitForEvent(cropVideo, "loadedmetadata");
-        if (belowRecommendedResolution(cropVideo.videoWidth, cropVideo.videoHeight)) {
+        if (!isRecommendedResolution(cropVideo.videoWidth, cropVideo.videoHeight)) {
           showWarning(
-            `This video is ${cropVideo.videoWidth}x${cropVideo.videoHeight}. Results may be bad with videos below 1080p, and 1080p is highly recommended.`
+            `This video is ${cropVideo.videoWidth}x${cropVideo.videoHeight}. 720p and 1080p videos are supported and recommended over other resolutions.`
           );
         }
 
@@ -1275,8 +1275,11 @@
       return Boolean(file && file.name.toLowerCase().endsWith(".mp4"));
     }
 
-    function belowRecommendedResolution(width, height) {
-      return width < 1920 || height < 1080;
+    function isRecommendedResolution(width, height) {
+      return (
+        (width === 1280 && height === 720) ||
+        (width === 1920 && height === 1080)
+      );
     }
 
     function resetSelectedVideo() {
@@ -1317,9 +1320,12 @@
       const width = cropVideo.videoWidth;
       const height = cropVideo.videoHeight;
       const context = cropCanvas.getContext("2d");
+      const aspectRatio = width / Math.max(1, height);
 
       cropCanvas.width = width;
       cropCanvas.height = height;
+      cropStage.style.aspectRatio = `${width} / ${height}`;
+      cropStage.style.maxWidth = `min(100%, calc((100vh - 250px) * ${aspectRatio}))`;
       context.drawImage(cropVideo, 0, 0, width, height);
     }
 
